@@ -26,7 +26,7 @@ Most cryptocurrencies have been captured by ASIC farms and mining pools, making 
 
 ### Option 1: Download Binary (Recommended)
 
-Download the latest release for your platform from [Releases](https://github.com/arnoac/equiforge/releases):
+Download the latest release for your platform from [Releases](https://github.com/equiforge/equiforge/releases):
 
 | Platform | File |
 |---|---|
@@ -241,6 +241,6 @@ MIT — do whatever you want with it.
 
 <div align="center">
 
-**[Start Mining](#start-mining)** · **[Block Explorer](http://129.80.239.237:9334)** · **[Discord](#)** · **[Twitter](#)**
+**[Start Mining](#start-mining)** · **[Block Explorer](http://129.80.239.237:9334)** · **[Discord](https://discord.gg/ZZ8e9NTjdR)** · **[𝕏 Twitter](https://x.com/eqf_crypto)**
 
 </div>
