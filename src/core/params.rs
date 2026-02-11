@@ -24,22 +24,7 @@ pub const MAX_BLOCK_SIZE: usize = 4 * 1024 * 1024;
 /// Maximum transactions per block
 pub const MAX_TXS_PER_BLOCK: usize = 10_000;
 
-/// Genesis block timestamp (2025-01-01 00:00:00 UTC)
-pub const GENESIS_TIMESTAMP: u64 = 1735689600;
-
 /// Initial difficulty: number of leading zero bits required in block hash.
-///
-/// With EquiHash-X (memory-hard, ~100-200 H/s per core on modern CPU):
-///   4  bits = ~16 hashes           → <1s
-///   6  bits = ~64 hashes           → <1s
-///   8  bits = ~256 hashes          → ~1-2s
-///   10 bits = ~1024 hashes         → ~5-10s
-///   12 bits = ~4096 hashes         → ~20-40s
-///   14 bits = ~16K hashes          → ~1.5-3 min
-///
-/// Starting at 8 gives ~1-2 seconds per block on a single core.
-/// Multi-core (12 threads) will find blocks faster, and the LWMA
-/// will converge to 90s target by adjusting upward.
 pub const INITIAL_DIFFICULTY: u32 = 8;
 
 /// Protocol version — increment when chain format changes
@@ -47,9 +32,6 @@ pub const PROTOCOL_VERSION: u32 = 2;
 
 /// PoW algorithm identifier (stored in chain metadata for compatibility checks)
 pub const POW_ALGORITHM: &str = "equihash-x-v1";
-
-/// Network magic bytes for testnet
-pub const TESTNET_MAGIC: [u8; 4] = [0xEF, 0x01, 0xF0, 0x42];
 
 /// Community fund percentage of block reward (5%)
 pub const COMMUNITY_FUND_PERCENT: u64 = 5;
@@ -60,22 +42,69 @@ pub const MIN_TX_FEE: u64 = 1000; // 0.00001 EQF
 /// Coinbase maturity (blocks before mined coins can be spent)
 pub const COINBASE_MATURITY: u64 = 100;
 
-/// Default seed nodes for initial peer discovery.
-/// These are the first nodes a new client connects to.
-/// Once connected, peers are discovered via gossip (GetPeers/Peers).
-/// To run your own seed node: `equiforge node --port 9333` on a VPS with port 9333 open.
-pub const SEED_NODES: &[&str] = &[
-    "129.80.239.237:9333",
-];
-
 /// How often to request peers from connected nodes (seconds)
 pub const PEER_EXCHANGE_INTERVAL: u64 = 120;
 
 /// Maximum number of outbound peer connections to maintain
-pub const MAX_OUTBOUND_PEERS: usize = 8;
+pub const MAX_OUTBOUND_PEERS: usize = 12;
 
-/// Maximum number of total peer connections
-pub const MAX_PEERS: usize = 32;
+/// Maximum number of total peer connections (inbound + outbound)
+pub const MAX_PEERS: usize = 256;
+
+// ─── Network Configuration (Mainnet vs Testnet) ─────────────────────
+
+use std::sync::OnceLock;
+
+/// Runtime network configuration — set once at startup based on --testnet flag
+#[derive(Debug, Clone)]
+pub struct NetworkConfig {
+    pub name: &'static str,
+    pub magic: [u8; 4],
+    pub default_port: u16,
+    pub default_rpc_port: u16,
+    pub genesis_timestamp: u64,
+    pub data_dir: &'static str,
+    pub seed_nodes: Vec<String>,
+}
+
+static NETWORK: OnceLock<NetworkConfig> = OnceLock::new();
+
+pub fn init_network(testnet: bool) {
+    let config = if testnet {
+        NetworkConfig {
+            name: "testnet",
+            magic: [0xEF, 0x01, 0xF0, 0x99],
+            default_port: 19333,
+            default_rpc_port: 19332,
+            genesis_timestamp: 1735689600 + 1, // Different genesis than mainnet
+            data_dir: "equiforge_testnet",
+            seed_nodes: vec!["129.80.239.237:19333".to_string()],
+        }
+    } else {
+        NetworkConfig {
+            name: "mainnet",
+            magic: [0xEF, 0x01, 0xF0, 0x42],
+            default_port: 9333,
+            default_rpc_port: 9332,
+            genesis_timestamp: 1735689600,
+            data_dir: "equiforge_data",
+            seed_nodes: vec!["129.80.239.237:9333".to_string()],
+        }
+    };
+    NETWORK.set(config).expect("Network already initialized");
+}
+
+pub fn network() -> &'static NetworkConfig {
+    NETWORK.get().expect("Network not initialized — call init_network() first")
+}
+
+/// Convenience accessors used throughout the codebase
+pub fn magic_bytes() -> [u8; 4] { network().magic }
+pub fn genesis_timestamp() -> u64 { network().genesis_timestamp }
+pub fn default_port() -> u16 { network().default_port }
+pub fn seed_nodes() -> &'static [String] { &network().seed_nodes }
+pub fn data_dir() -> &'static str { network().data_dir }
+pub fn is_testnet() -> bool { network().name == "testnet" }
 
 /// Calculate block reward at a given height
 pub fn block_reward(height: u64) -> u64 {

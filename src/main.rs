@@ -14,16 +14,19 @@ const DEFAULT_DATA_DIR: &str = "equiforge_data";
 const DEFAULT_P2P_PORT: u16 = 9333;
 
 #[derive(Parser)]
-#[command(name = "equiforge", version = "1.0.0")]
+#[command(name = "equiforge", version = "1.0.5")]
 #[command(about = "EquiForge - A fair, accessible blockchain network")]
 struct Cli {
-    #[arg(long, default_value = DEFAULT_DATA_DIR, global = true)]
-    data_dir: String,
-    #[arg(long, default_value_t = DEFAULT_P2P_PORT, global = true)]
-    port: u16,
+    #[arg(long, global = true)]
+    data_dir: Option<String>,
+    #[arg(long, global = true)]
+    port: Option<u16>,
     /// Wallet password (for encrypted wallets)
     #[arg(long, global = true)]
     password: Option<String>,
+    /// Run on testnet (separate chain, port 19333, data in equiforge_testnet/)
+    #[arg(long, global = true)]
+    testnet: bool,
     #[command(subcommand)]
     command: Commands,
 }
@@ -111,9 +114,18 @@ fn main() {
         .init();
 
     let cli = Cli::parse();
-    let data_dir = &cli.data_dir;
-    let port = cli.port;
+
+    // Initialize network config (must happen before anything touches params)
+    init_network(cli.testnet);
+
+    let data_dir_str = cli.data_dir.unwrap_or_else(|| data_dir().to_string());
+    let data_dir = &data_dir_str;
+    let port = cli.port.unwrap_or_else(|| default_port());
     let pw = cli.password.as_deref();
+
+    if is_testnet() {
+        println!("⚠️  Running on TESTNET (port {}, data: {})", port, data_dir);
+    }
 
     match cli.command {
         Commands::Init => {
@@ -368,7 +380,8 @@ async fn run_node(data_dir: &str, port: u16, seeds: Vec<String>, mine: bool, thr
     println!("  Wallet:    {}", wallet.primary_address());
     println!("  Encrypted: {}", wallet.is_encrypted());
     println!("  Mining:    {}", if mine { "enabled" } else { "disabled" });
-    if !SEED_NODES.is_empty() { println!("  Seeds:     {} hardcoded", SEED_NODES.len()); }
+    if !seed_nodes().is_empty() { println!("  Seeds:     {} hardcoded", seed_nodes().len()); }
+    if is_testnet() { println!("  Network:   TESTNET"); }
 
     // Load pending tx
     let pending_path = PathBuf::from(data_dir).join("pending_tx.json");
@@ -438,8 +451,16 @@ async fn run_node(data_dir: &str, port: u16, seeds: Vec<String>, mine: bool, thr
         }
     });
 
-    // P2P
-    if let Err(e) = network::start_node(state, seeds).await {
+    // P2P — load anchors from last session
+    let mut all_seeds = seeds;
+    let anchors = network::load_anchors(data_dir);
+    if !anchors.is_empty() {
+        tracing::info!("⚓ Loaded {} anchor peers from last session", anchors.len());
+        for a in anchors {
+            if !all_seeds.contains(&a) { all_seeds.push(a); }
+        }
+    }
+    if let Err(e) = network::start_node(state, all_seeds).await {
         tracing::error!("Node error: {}", e);
     }
 }
@@ -457,22 +478,45 @@ async fn mining_task(state: Arc<NodeState>, wallet: Wallet, threads: usize, stop
                 miner_pubkey_hash: wallet.primary_pubkey_hash(),
                 community_fund_hash: [0xCF; 32], threads,
             };
-            miner::create_block_template(&chain, &pending, &cfg)
+            let height = chain.height + 1;
+            let diff = chain.next_difficulty();
+            drop(chain);
+            tracing::info!("⛏️  Mining block #{} (difficulty: {} bits, ~{} expected hashes, {} threads)...",
+                height, diff, 1u64 << diff.min(63), threads);
+            let chain = state.chain.read().await;
+            let t = miner::create_block_template(&chain, &pending, &cfg);
+            drop(chain);
+            t
         };
 
-        let ms = Arc::new(AtomicBool::new(false));
-        let ms2 = ms.clone(); let gs = stop.clone();
-        let w = tokio::spawn(async move {
+        let mine_stop = Arc::new(AtomicBool::new(false));
+        let mine_stop2 = mine_stop.clone();
+        let global_stop = stop.clone();
+        let state2 = state.clone();
+
+        // Watch for global stop OR new block from peer
+        let watcher = tokio::spawn(async move {
             loop {
-                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                if gs.load(Ordering::Relaxed) { ms2.store(true, Ordering::Relaxed); break; }
+                tokio::select! {
+                    _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {
+                        if global_stop.load(Ordering::Relaxed) {
+                            mine_stop2.store(true, Ordering::Relaxed);
+                            break;
+                        }
+                    }
+                    _ = state2.new_block_notify.notified() => {
+                        // New block arrived — cancel current mining
+                        mine_stop2.store(true, Ordering::Relaxed);
+                        break;
+                    }
+                }
             }
         });
 
         let result = tokio::task::spawn_blocking(move || {
-            miner::mine_block_parallel(tpl, threads, ms)
+            miner::mine_block_parallel(tpl, threads, mine_stop)
         }).await.unwrap();
-        w.abort();
+        watcher.abort();
 
         match result {
             miner::MineResult::Found(block) => network::broadcast_block(&state, block).await,
@@ -483,6 +527,8 @@ async fn mining_task(state: Arc<NodeState>, wallet: Wallet, threads: usize, stop
 
 async fn status_task(state: Arc<NodeState>, stop: Arc<AtomicBool>) {
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+    let mut stuck_count: u32 = 0;
+    let mut last_height: u64 = 0;
     loop {
         interval.tick().await;
         if stop.load(Ordering::Relaxed) { break; }
@@ -491,5 +537,34 @@ async fn status_task(state: Arc<NodeState>, stop: Arc<AtomicBool>) {
         let bans = state.scoreboard.lock().await.ban_count();
         tracing::info!("📊 height={} diff={:.1} tip={} utxos={} peers={} banned={}",
             h, fd, &hex::encode(tip)[..16], u, p, bans);
+
+        // ─── Stuck Sync Detection ───
+        // Check if peers are ahead but our height isn't moving
+        let best_peer_height = {
+            let peers = state.peers.read().await;
+            peers.values().map(|p| p.best_height).max().unwrap_or(0)
+        };
+
+        if h == last_height && best_peer_height > h + 5 && p > 0 {
+            stuck_count += 1;
+            if stuck_count >= 4 {
+                // Stuck for 2+ minutes with peers ahead — chain is forked
+                tracing::warn!("⚠️  Sync appears stuck at height {} (peers at {}). Auto-recovering...", h, best_peer_height);
+
+                // Reset chain to genesis (keeps wallet intact)
+                let mut chain = state.chain.write().await;
+                chain.reset();
+                drop(chain);
+
+                stuck_count = 0;
+                tracing::info!("🔄 Chain reset to genesis. Re-syncing from peers...");
+
+                // Disconnect all peers to force fresh handshakes and re-sync
+                state.peers.write().await.clear();
+            }
+        } else {
+            stuck_count = 0;
+        }
+        last_height = h;
     }
 }

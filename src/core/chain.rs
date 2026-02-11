@@ -175,11 +175,45 @@ impl Chain {
         }
     }
 
+    /// Reset chain to genesis, clearing all data but keeping storage backend.
+    /// This is used for auto-recovery when sync is stuck on a wrong fork.
+    pub fn reset(&mut self) {
+        let had_storage = self.storage.take();
+        let genesis = Self::create_genesis_block();
+        let genesis_hash = genesis.header.hash();
+        let work = block_work(genesis.header.difficulty_target);
+
+        self.headers.clear();
+        self.blocks.clear();
+        self.height_index.clear();
+        self.cumulative_work.clear();
+        self.children.clear();
+        self.utxo_set = UtxoSet::new();
+        self.tip = genesis_hash;
+        self.height = 0;
+        self.recent_timestamps = vec![genesis.header.timestamp];
+        self.fractional_difficulty = INITIAL_DIFFICULTY as f64;
+        self.batch_mode = false;
+
+        self.apply_block_utxos(&genesis);
+        self.headers.insert(genesis_hash, genesis.header.clone());
+        self.height_index.insert(0, genesis_hash);
+        self.cumulative_work.insert(genesis_hash, work);
+        self.blocks.insert(genesis_hash, genesis);
+
+        // Re-attach storage and persist fresh genesis
+        if let Some(storage) = had_storage {
+            let _ = storage.clear_all();
+            let _ = self.persist_genesis(&storage);
+            self.storage = Some(storage);
+        }
+    }
+
     fn load_from_storage(storage: Storage) -> Result<Self, String> {
         let tip = storage.get_tip().map_err(|e| e.to_string())?.ok_or("no tip")?;
         let height = storage.get_height().map_err(|e| e.to_string())?.ok_or("no height")?;
         let timestamps = storage.get_timestamps().map_err(|e| e.to_string())?
-            .unwrap_or_else(|| vec![GENESIS_TIMESTAMP]);
+            .unwrap_or_else(|| vec![genesis_timestamp()]);
         let fractional_difficulty = storage.get_fractional_difficulty()
             .map_err(|e| e.to_string())?.unwrap_or(INITIAL_DIFFICULTY as f64);
 
@@ -240,11 +274,12 @@ impl Chain {
         let community_fund = [0xCF; 32];
         let reward = block_reward(0);
         let coinbase = Transaction::new_coinbase(0, reward, genesis_miner, community_fund);
+        let ts = genesis_timestamp();
         let merkle_root = {
             let tmp = Block {
                 header: BlockHeader {
                     version: PROTOCOL_VERSION, prev_hash: NULL_HASH, merkle_root: NULL_HASH,
-                    timestamp: GENESIS_TIMESTAMP, difficulty_target: INITIAL_DIFFICULTY,
+                    timestamp: ts, difficulty_target: INITIAL_DIFFICULTY,
                     nonce: 0, height: 0,
                 },
                 transactions: vec![coinbase.clone()],
@@ -254,7 +289,7 @@ impl Chain {
         Block {
             header: BlockHeader {
                 version: PROTOCOL_VERSION, prev_hash: NULL_HASH, merkle_root,
-                timestamp: GENESIS_TIMESTAMP, difficulty_target: INITIAL_DIFFICULTY,
+                timestamp: ts, difficulty_target: INITIAL_DIFFICULTY,
                 nonce: 0, height: 0,
             },
             transactions: vec![coinbase],
@@ -654,6 +689,69 @@ impl Chain {
 
     /// Get the block at a given hash
     pub fn block_by_hash(&self, hash: &Hash256) -> Option<&Block> { self.blocks.get(hash) }
+
+    /// Get headers for a range of heights on the active chain
+    pub fn headers_in_range(&self, start: u64, count: u32) -> Vec<BlockHeader> {
+        let mut headers = Vec::new();
+        let end = (start + count as u64).min(self.height + 1);
+        for h in start..end {
+            if let Some(hash) = self.height_index.get(&h) {
+                if let Some(header) = self.headers.get(hash) {
+                    headers.push(header.clone());
+                }
+            }
+        }
+        headers
+    }
+
+    /// Validate a chain of headers without requiring full block data.
+    /// Returns the hashes of headers that are valid and extend our known chain.
+    /// This is used for headers-first sync: validate headers first, then download blocks.
+    pub fn validate_header_chain(&self, headers: &[BlockHeader]) -> Vec<Hash256> {
+        let mut valid = Vec::new();
+        let mut prev_hash = if let Some(first) = headers.first() {
+            first.prev_hash
+        } else {
+            return valid;
+        };
+
+        for header in headers {
+            let hash = header.hash();
+
+            // Already have it
+            if self.headers.contains_key(&hash) {
+                prev_hash = hash;
+                valid.push(hash);
+                continue;
+            }
+
+            // Parent must exist (either in our chain or earlier in this batch)
+            if !self.headers.contains_key(&header.prev_hash) && header.prev_hash != prev_hash {
+                break;
+            }
+
+            // PoW must be valid
+            if !header.meets_difficulty() {
+                break;
+            }
+
+            prev_hash = hash;
+            valid.push(hash);
+        }
+        valid
+    }
+
+    /// Get multiple blocks by hash
+    pub fn blocks_by_hashes(&self, hashes: &[Hash256]) -> Vec<Block> {
+        hashes.iter()
+            .filter_map(|h| self.blocks.get(h).cloned())
+            .collect()
+    }
+
+    /// Get the genesis block hash
+    pub fn genesis_hash(&self) -> Hash256 {
+        self.height_index.get(&0).copied().unwrap_or(NULL_HASH)
+    }
 }
 
 // ─── Errors ─────────────────────────────────────────────────────────

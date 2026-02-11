@@ -25,6 +25,16 @@ pub enum NetMessage {
     Pong(u64),
     GetPeers,
     Peers(Vec<String>),
+    VersionV2 { version: u32, best_height: u64, best_hash: Hash256, genesis_hash: Hash256, timestamp: u64, listen_port: u16 },
+    // ─── Headers-first sync ───
+    GetHeaders { start_height: u64, count: u32 },
+    Headers(Vec<BlockHeader>),
+    GetBlockData(Vec<Hash256>),  // Request full blocks by hash after header validation
+    BlockData(Vec<Block>),
+    // ─── Compact block relay ───
+    CompactBlock { header: BlockHeader, tx_hashes: Vec<Hash256> },
+    GetTransactions(Vec<Hash256>), // Request missing txs for compact block
+    TransactionBatch(Vec<Transaction>),
 }
 
 // ─── Wire Protocol ───────────────────────────────────────────────────
@@ -35,7 +45,7 @@ const MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
 pub fn encode_message(msg: &NetMessage) -> Vec<u8> {
     let payload = bincode::serialize(msg).expect("serialization failed");
     let mut data = Vec::with_capacity(HEADER_SIZE + payload.len());
-    data.extend_from_slice(&TESTNET_MAGIC);
+    data.extend_from_slice(&magic_bytes());
     data.extend_from_slice(&(payload.len() as u32).to_le_bytes());
     data.extend_from_slice(&payload);
     data
@@ -44,7 +54,7 @@ pub fn encode_message(msg: &NetMessage) -> Vec<u8> {
 async fn read_message(stream: &mut TcpStream) -> Result<NetMessage, String> {
     let mut header = [0u8; HEADER_SIZE];
     stream.read_exact(&mut header).await.map_err(|e| format!("read header: {}", e))?;
-    if header[0..4] != TESTNET_MAGIC { return Err("invalid magic bytes".into()); }
+    if header[0..4] != magic_bytes() { return Err("invalid magic bytes".into()); }
     let length = u32::from_le_bytes(header[4..8].try_into().unwrap()) as usize;
     if length > MAX_MESSAGE_SIZE { return Err(format!("message too large: {} bytes", length)); }
     let mut payload = vec![0u8; length];
@@ -57,6 +67,89 @@ async fn write_message(stream: &mut TcpStream, msg: &NetMessage) -> Result<(), S
     stream.write_all(&data).await.map_err(|e| format!("write: {}", e))?;
     stream.flush().await.map_err(|e| format!("flush: {}", e))?;
     Ok(())
+}
+
+// ─── Per-Peer Rate Limiter ──────────────────────────────────────────
+
+struct PeerRateLimiter {
+    /// Bytes sent in current window
+    bytes_sent: u64,
+    /// Bytes received in current window
+    bytes_recv: u64,
+    /// Window start time
+    window_start: u64,
+    /// Max bytes per second (outbound)
+    max_send_rate: u64,
+    /// Max bytes per second (inbound)
+    max_recv_rate: u64,
+}
+
+impl PeerRateLimiter {
+    fn new() -> Self {
+        Self {
+            bytes_sent: 0, bytes_recv: 0,
+            window_start: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
+            max_send_rate: 10 * 1024 * 1024, // 10 MB/s default
+            max_recv_rate: 10 * 1024 * 1024,
+        }
+    }
+
+    fn record_send(&mut self, bytes: u64) {
+        self.maybe_reset_window();
+        self.bytes_sent += bytes;
+    }
+
+    fn record_recv(&mut self, bytes: u64) {
+        self.maybe_reset_window();
+        self.bytes_recv += bytes;
+    }
+
+    fn is_send_limited(&self) -> bool {
+        let elapsed = self.elapsed_secs().max(1);
+        self.bytes_sent / elapsed > self.max_send_rate
+    }
+
+    fn is_recv_limited(&self) -> bool {
+        let elapsed = self.elapsed_secs().max(1);
+        self.bytes_recv / elapsed > self.max_recv_rate
+    }
+
+    fn elapsed_secs(&self) -> u64 {
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        now.saturating_sub(self.window_start)
+    }
+
+    fn maybe_reset_window(&mut self) {
+        if self.elapsed_secs() >= 10 {
+            self.bytes_sent = 0;
+            self.bytes_recv = 0;
+            self.window_start = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        }
+    }
+}
+
+// ─── Anchor Connections ────────────────────────────────────────────
+
+/// Anchor connections are persistent peers that survive restarts.
+/// Stored as a file in the data directory so we reconnect on restart.
+const MAX_ANCHORS: usize = 4;
+const ANCHOR_FILE: &str = "anchors.json";
+
+pub fn load_anchors(data_dir: &str) -> Vec<String> {
+    let path = std::path::PathBuf::from(data_dir).join(ANCHOR_FILE);
+    if let Ok(data) = std::fs::read_to_string(&path) {
+        serde_json::from_str(&data).unwrap_or_default()
+    } else {
+        Vec::new()
+    }
+}
+
+pub fn save_anchors(data_dir: &str, anchors: &[String]) {
+    let path = std::path::PathBuf::from(data_dir).join(ANCHOR_FILE);
+    let limited: Vec<&String> = anchors.iter().take(MAX_ANCHORS).collect();
+    if let Ok(json) = serde_json::to_string(&limited) {
+        let _ = std::fs::write(path, json);
+    }
 }
 
 // ─── Ban System ─────────────────────────────────────────────────────
@@ -255,6 +348,7 @@ pub struct PeerInfo {
     pub version: u32,
     pub best_height: u64,
     pub last_seen: u64,
+    pub supports_v2: bool,
 }
 
 pub struct NodeState {
@@ -266,12 +360,14 @@ pub struct NodeState {
     pub listen_port: u16,
     pub block_tx: broadcast::Sender<Block>,
     pub tx_tx: broadcast::Sender<Transaction>,
+    /// Notifies the miner to restart with a new template when a block arrives
+    pub new_block_notify: tokio::sync::Notify,
 }
 
 impl NodeState {
     pub fn new(listen_port: u16) -> Arc<Self> {
-        let (block_tx, _) = broadcast::channel(100);
-        let (tx_tx, _) = broadcast::channel(1000);
+        let (block_tx, _) = broadcast::channel(256);
+        let (tx_tx, _) = broadcast::channel(4096);
         Arc::new(Self {
             chain: RwLock::new(Chain::new()),
             mempool: Mutex::new(Mempool::new(10_000)),
@@ -279,12 +375,13 @@ impl NodeState {
             known_addresses: RwLock::new(HashSet::new()),
             scoreboard: Mutex::new(PeerScoreboard::new()),
             listen_port, block_tx, tx_tx,
+            new_block_notify: tokio::sync::Notify::new(),
         })
     }
 
     pub fn open(data_dir: &str, listen_port: u16) -> Arc<Self> {
-        let (block_tx, _) = broadcast::channel(100);
-        let (tx_tx, _) = broadcast::channel(1000);
+        let (block_tx, _) = broadcast::channel(256);
+        let (tx_tx, _) = broadcast::channel(4096);
         let chain = Chain::open(data_dir).unwrap_or_else(|e| {
             tracing::error!("Failed to open chain from {}: {}", data_dir, e);
             Chain::new()
@@ -296,6 +393,7 @@ impl NodeState {
             known_addresses: RwLock::new(HashSet::new()),
             scoreboard: Mutex::new(PeerScoreboard::new()),
             listen_port, block_tx, tx_tx,
+            new_block_notify: tokio::sync::Notify::new(),
         })
     }
 }
@@ -312,34 +410,77 @@ async fn handle_connection(mut stream: TcpStream, state: Arc<NodeState>, peer_ad
         }
     }
 
+    // TCP optimizations
+    let _ = stream.set_nodelay(true);
+
     let direction = if is_outbound { "Outbound" } else { "Inbound" };
     tracing::info!("🔗 {} connection: {}", direction, peer_addr);
 
-    let (our_height, our_hash) = {
+    let (our_height, our_hash, our_genesis) = {
         let chain = state.chain.read().await;
-        (chain.height, chain.tip)
+        let genesis = chain.block_at_height(0).map(|b| b.header.hash()).unwrap_or(NULL_HASH);
+        (chain.height, chain.tip, genesis)
     };
     let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
 
-    let version_msg = NetMessage::Version {
+    let version_msg = NetMessage::VersionV2 {
         version: PROTOCOL_VERSION, best_height: our_height, best_hash: our_hash,
-        timestamp: now, listen_port: state.listen_port,
+        genesis_hash: our_genesis, timestamp: now, listen_port: state.listen_port,
     };
     if let Err(e) = write_message(&mut stream, &version_msg).await {
         tracing::error!("Failed to send version to {}: {}", peer_addr, e);
         return;
     }
 
+    // Track if peer supports v2 protocol
+    let peer_is_v2;
+
     let peer_height = match read_message(&mut stream).await {
-        Ok(NetMessage::Version { version, best_height, listen_port, .. }) => {
-            tracing::info!("  Peer {} v{} at height {}", peer_addr, version, best_height);
+        Ok(NetMessage::VersionV2 { version, best_height, genesis_hash, listen_port, .. }) => {
+            peer_is_v2 = true;
+            // Verify genesis match
+            if genesis_hash != our_genesis {
+                tracing::warn!("❌ Peer {} has different genesis! Theirs: {} Ours: {}",
+                    peer_addr, &hex::encode(genesis_hash)[..16], &hex::encode(our_genesis)[..16]);
+
+                if best_height > our_height {
+                    tracing::info!("🔄 Peer is ahead — resetting our chain for re-sync...");
+                    let mut chain = state.chain.write().await;
+                    chain.reset();
+                    drop(chain);
+                } else {
+                    tracing::warn!("🚫 Disconnecting peer {} (wrong genesis)", peer_addr);
+                    return;
+                }
+            }
+
+            tracing::info!("  Peer {} v{} at height {} (genesis verified ✅)", peer_addr, version, best_height);
             {
                 let peer_ip = peer_addr.split(':').next().unwrap_or("127.0.0.1");
                 let listen_addr = format!("{}:{}", peer_ip, listen_port);
                 let mut peers = state.peers.write().await;
                 peers.insert(peer_addr.clone(), PeerInfo {
                     address: peer_addr.clone(), listen_address: listen_addr.clone(),
-                    version, best_height, last_seen: now,
+                    version, best_height, last_seen: now, supports_v2: true,
+                });
+                drop(peers);
+                let mut known = state.known_addresses.write().await;
+                known.insert(listen_addr);
+            }
+            let _ = write_message(&mut stream, &NetMessage::VersionAck).await;
+            best_height
+        }
+        Ok(NetMessage::Version { version, best_height, listen_port, .. }) => {
+            peer_is_v2 = false;
+            // Old node without genesis — accept but can't verify
+            tracing::info!("  Peer {} v{} at height {} (legacy, no genesis check)", peer_addr, version, best_height);
+            {
+                let peer_ip = peer_addr.split(':').next().unwrap_or("127.0.0.1");
+                let listen_addr = format!("{}:{}", peer_ip, listen_port);
+                let mut peers = state.peers.write().await;
+                peers.insert(peer_addr.clone(), PeerInfo {
+                    address: peer_addr.clone(), listen_address: listen_addr.clone(),
+                    version, best_height, last_seen: now, supports_v2: false,
                 });
                 drop(peers);
                 let mut known = state.known_addresses.write().await;
@@ -356,9 +497,12 @@ async fn handle_connection(mut stream: TcpStream, state: Arc<NodeState>, peer_ad
         Err(e) => { tracing::error!("Version read from {}: {}", peer_addr, e); return; }
     };
 
+    // Re-read our height after potential reset
+    let our_height = state.chain.read().await.height;
+
     match tokio::time::timeout(std::time::Duration::from_secs(5), read_message(&mut stream)).await {
         Ok(Ok(NetMessage::VersionAck)) => tracing::info!("  ✅ Handshake with {}", peer_addr),
-        Ok(Ok(NetMessage::Version { .. })) => {
+        Ok(Ok(NetMessage::Version { .. })) | Ok(Ok(NetMessage::VersionV2 { .. })) => {
             let _ = write_message(&mut stream, &NetMessage::VersionAck).await;
             tracing::info!("  ✅ Handshake with {}", peer_addr);
         }
@@ -366,11 +510,22 @@ async fn handle_connection(mut stream: TcpStream, state: Arc<NodeState>, peer_ad
     }
 
     if peer_height > our_height {
-        tracing::info!("📥 Peer {} ahead ({} vs {}), syncing...", peer_addr, peer_height, our_height);
-        let _ = write_message(&mut stream, &NetMessage::GetBlocks {
-            start_height: our_height + 1,
-            count: (peer_height - our_height).min(500) as u32,
-        }).await;
+        tracing::info!("📥 Peer {} ahead ({} vs {}), syncing{}...",
+            peer_addr, peer_height, our_height, if peer_is_v2 { " (headers-first)" } else { "" });
+
+        if peer_is_v2 {
+            // Headers-first sync: get headers, validate PoW, then request blocks
+            let _ = write_message(&mut stream, &NetMessage::GetHeaders {
+                start_height: our_height + 1,
+                count: (peer_height - our_height).min(2000) as u32,
+            }).await;
+        } else {
+            // Legacy sync: get full blocks directly
+            let _ = write_message(&mut stream, &NetMessage::GetBlocks {
+                start_height: our_height + 1,
+                count: (peer_height - our_height).min(500) as u32,
+            }).await;
+        }
     }
 
     let _ = write_message(&mut stream, &NetMessage::GetPeers).await;
@@ -378,12 +533,16 @@ async fn handle_connection(mut stream: TcpStream, state: Arc<NodeState>, peer_ad
     let mut block_rx = state.block_tx.subscribe();
     let mut tx_rx = state.tx_tx.subscribe();
     let mut peer_exchange = tokio::time::interval(std::time::Duration::from_secs(PEER_EXCHANGE_INTERVAL));
+    let mut keepalive = tokio::time::interval(std::time::Duration::from_secs(60));
 
     loop {
         tokio::select! {
-            msg_result = read_message(&mut stream) => {
+            msg_result = tokio::time::timeout(
+                std::time::Duration::from_secs(300), // 5 min read timeout
+                read_message(&mut stream)
+            ) => {
                 match msg_result {
-                    Ok(msg) => {
+                    Ok(Ok(msg)) => {
                         match handle_message(&mut stream, &state, &peer_addr, msg).await {
                             Ok(()) => {}
                             Err(e) => {
@@ -398,15 +557,30 @@ async fn handle_connection(mut stream: TcpStream, state: Arc<NodeState>, peer_ad
                             break;
                         }
                     }
-                    Err(e) => {
+                    Ok(Err(e)) => {
                         tracing::info!("🔌 Peer {} disconnected: {}", peer_addr, e);
+                        break;
+                    }
+                    Err(_) => {
+                        tracing::info!("🔌 Peer {} timed out (no messages for 5 min)", peer_addr);
                         break;
                     }
                 }
             }
             block_result = block_rx.recv() => {
                 if let Ok(block) = block_result {
-                    let _ = write_message(&mut stream, &NetMessage::NewBlock(block)).await;
+                    if peer_is_v2 {
+                        // Send compact block (header + tx hashes) — much smaller
+                        let tx_hashes: Vec<Hash256> = block.transactions.iter()
+                            .map(|tx| tx.hash())
+                            .collect();
+                        let _ = write_message(&mut stream, &NetMessage::CompactBlock {
+                            header: block.header.clone(),
+                            tx_hashes,
+                        }).await;
+                    } else {
+                        let _ = write_message(&mut stream, &NetMessage::NewBlock(block)).await;
+                    }
                 }
             }
             tx_result = tx_rx.recv() => {
@@ -416,6 +590,18 @@ async fn handle_connection(mut stream: TcpStream, state: Arc<NodeState>, peer_ad
             }
             _ = peer_exchange.tick() => {
                 let _ = write_message(&mut stream, &NetMessage::GetPeers).await;
+            }
+            _ = keepalive.tick() => {
+                let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+                if write_message(&mut stream, &NetMessage::Ping(nonce)).await.is_err() {
+                    tracing::info!("🔌 Peer {} unreachable (ping failed)", peer_addr);
+                    break;
+                }
+                // Update last_seen
+                let mut peers = state.peers.write().await;
+                if let Some(peer) = peers.get_mut(&peer_addr) {
+                    peer.last_seen = nonce;
+                }
             }
         }
     }
@@ -441,6 +627,8 @@ async fn handle_message(
                     mempool.remove_confirmed(&block);
                     drop(mempool);
                     let _ = state.block_tx.send(block);
+                    // Tell miner to restart with new template
+                    state.new_block_notify.notify_waiters();
                     tracing::info!("📦 Block #{} from {} ({})", height, peer_addr, &hex::encode(hash)[..16]);
                     let mut peers = state.peers.write().await;
                     if let Some(peer) = peers.get_mut(peer_addr) {
@@ -487,15 +675,20 @@ async fn handle_message(
         }
 
         NetMessage::GetBlocks { start_height, count } => {
+            // Rate-limit: cap at 500 blocks, and limit how much data we send
+            let capped_count = count.min(500);
             let chain = state.chain.read().await;
             let mut blocks = Vec::new();
-            let end = (start_height + count as u64).min(chain.height + 1);
+            let end = (start_height + capped_count as u64).min(chain.height + 1);
             for h in start_height..end {
                 if let Some(block) = chain.block_at_height(h) { blocks.push(block.clone()); }
             }
-            tracing::info!("📤 Sending {} blocks to {}", blocks.len(), peer_addr);
+            let send_count = blocks.len();
             drop(chain);
-            write_message(stream, &NetMessage::Blocks(blocks)).await?;
+            if send_count > 0 {
+                tracing::info!("📤 Sending {} blocks to {} ({}→{})", send_count, peer_addr, start_height, start_height + send_count as u64 - 1);
+                write_message(stream, &NetMessage::Blocks(blocks)).await?;
+            }
         }
 
         NetMessage::Blocks(blocks) => {
@@ -503,11 +696,13 @@ async fn handle_message(
             let mut accepted = 0;
             let is_batch_sync = count > 10;
 
-            {
+            // Process in chunks of 25, releasing the lock between chunks
+            // so the miner can submit blocks
+            let chunk_size = 25;
+            for chunk in blocks.chunks(chunk_size) {
                 let mut chain = state.chain.write().await;
-                // Defer disk writes during bulk sync
                 if is_batch_sync { chain.set_batch_mode(true); }
-                for block in &blocks {
+                for block in chunk {
                     match chain.add_block(block.clone()) {
                         Ok(_) => {
                             accepted += 1;
@@ -519,6 +714,9 @@ async fn handle_message(
                     chain.set_batch_mode(false);
                     chain.flush_batch();
                 }
+                drop(chain);
+                // Yield to let miner and other tasks run
+                tokio::task::yield_now().await;
             }
 
             // Remove confirmed txs from mempool outside chain lock
@@ -527,6 +725,9 @@ async fn handle_message(
                 for block in &blocks {
                     mempool.remove_confirmed(block);
                 }
+                drop(mempool);
+                // Tell miner to restart with updated chain tip
+                state.new_block_notify.notify_waiters();
             }
 
             let our_height = {
@@ -593,7 +794,196 @@ async fn handle_message(
             }
         }
 
-        NetMessage::Version { .. } | NetMessage::VersionAck => {}
+        NetMessage::Version { .. } | NetMessage::VersionAck | NetMessage::VersionV2 { .. } => {}
+
+        // ─── Headers-First Sync ───
+
+        NetMessage::GetHeaders { start_height, count } => {
+            let capped = count.min(2000); // Headers are small, can send more
+            let chain = state.chain.read().await;
+            let headers = chain.headers_in_range(start_height, capped);
+            drop(chain);
+            if !headers.is_empty() {
+                tracing::info!("📤 Sending {} headers to {} ({}→{})",
+                    headers.len(), peer_addr, start_height, start_height + headers.len() as u64 - 1);
+                write_message(stream, &NetMessage::Headers(headers)).await?;
+            }
+        }
+
+        NetMessage::Headers(headers) => {
+            let count = headers.len();
+            if count == 0 { return Ok(()); }
+
+            let first_height = headers[0].height;
+            let last_height = headers.last().map(|h| h.height).unwrap_or(0);
+
+            // Validate the header chain (PoW check, parent linkage)
+            let valid_hashes = {
+                let chain = state.chain.read().await;
+                chain.validate_header_chain(&headers)
+            };
+
+            if valid_hashes.is_empty() {
+                tracing::debug!("All {} headers from {} rejected", count, peer_addr);
+                return Ok(());
+            }
+
+            // Filter to hashes we don't have full blocks for
+            let need_blocks: Vec<Hash256> = {
+                let chain = state.chain.read().await;
+                valid_hashes.iter()
+                    .filter(|h| chain.block_by_hash(h).is_none())
+                    .copied()
+                    .collect()
+            };
+
+            tracing::info!("📥 Got {} headers from {} (heights {}→{}), need {} blocks",
+                count, peer_addr, first_height, last_height, need_blocks.len());
+
+            // Request full block data for validated headers
+            if !need_blocks.is_empty() {
+                // Request in batches of 100
+                for chunk in need_blocks.chunks(100) {
+                    write_message(stream, &NetMessage::GetBlockData(chunk.to_vec())).await?;
+                }
+            }
+
+            // Request more headers if peer has more
+            let peers = state.peers.read().await;
+            if let Some(peer) = peers.get(peer_addr) {
+                if peer.best_height > last_height {
+                    drop(peers);
+                    write_message(stream, &NetMessage::GetHeaders {
+                        start_height: last_height + 1, count: 2000,
+                    }).await?;
+                }
+            }
+        }
+
+        NetMessage::GetBlockData(hashes) => {
+            let capped = if hashes.len() > 100 { &hashes[..100] } else { &hashes };
+            let chain = state.chain.read().await;
+            let blocks = chain.blocks_by_hashes(capped);
+            drop(chain);
+            if !blocks.is_empty() {
+                tracing::info!("📤 Sending {} block data to {}", blocks.len(), peer_addr);
+                write_message(stream, &NetMessage::BlockData(blocks)).await?;
+            }
+        }
+
+        NetMessage::BlockData(blocks) => {
+            // Same as Blocks handler — process received full blocks
+            let count = blocks.len();
+            let mut accepted = 0;
+            let chunk_size = 25;
+            for chunk in blocks.chunks(chunk_size) {
+                let mut chain = state.chain.write().await;
+                chain.set_batch_mode(true);
+                for block in chunk {
+                    match chain.add_block(block.clone()) {
+                        Ok(_) => accepted += 1,
+                        Err(e) => tracing::debug!("BlockData rejected: {}", e),
+                    }
+                }
+                chain.set_batch_mode(false);
+                chain.flush_batch();
+                drop(chain);
+                tokio::task::yield_now().await;
+            }
+            if accepted > 0 {
+                let mut mempool = state.mempool.lock().await;
+                for block in &blocks {
+                    mempool.remove_confirmed(block);
+                }
+                drop(mempool);
+                state.new_block_notify.notify_waiters();
+            }
+            let our_height = state.chain.read().await.height;
+            tracing::info!("📥 BlockData: accepted {}/{} from {} (height: {})", accepted, count, peer_addr, our_height);
+        }
+
+        // ─── Compact Block Relay ───
+
+        NetMessage::CompactBlock { header, tx_hashes } => {
+            let hash = header.hash();
+            let height = header.height;
+
+            // Check if we already have this block
+            {
+                let chain = state.chain.read().await;
+                if chain.block_by_hash(&hash).is_some() {
+                    return Ok(()); // Already have it
+                }
+            }
+
+            // Try to reconstruct the block from our mempool
+            let mut found_txs = Vec::new();
+            let mut missing_hashes = Vec::new();
+
+            if !tx_hashes.is_empty() {
+                let mempool = state.mempool.lock().await;
+                let pending = mempool.get_pending();
+                let pending_map: HashMap<Hash256, &Transaction> = pending.iter()
+                    .map(|tx| (tx.hash(), tx))
+                    .collect();
+                drop(mempool);
+
+                for tx_hash in &tx_hashes {
+                    if let Some(tx) = pending_map.get(tx_hash) {
+                        found_txs.push((*tx).clone());
+                    } else {
+                        missing_hashes.push(*tx_hash);
+                    }
+                }
+            }
+
+            if missing_hashes.is_empty() {
+                // We have all txs — reconstruct and add the block
+                // Build coinbase + found txs (coinbase should be first in tx_hashes)
+                let block = Block { header, transactions: found_txs };
+                let mut chain = state.chain.write().await;
+                match chain.add_block(block.clone()) {
+                    Ok(_) => {
+                        drop(chain);
+                        state.mempool.lock().await.remove_confirmed(&block);
+                        let _ = state.block_tx.send(block);
+                        state.new_block_notify.notify_waiters();
+                        tracing::info!("📦 Compact block #{} from {} ({})", height, peer_addr, &hex::encode(hash)[..16]);
+                    }
+                    Err(e) => tracing::debug!("Compact block #{} rejected: {}", height, e),
+                }
+            } else {
+                // Request missing transactions
+                tracing::debug!("Compact block #{}: need {} missing txs", height, missing_hashes.len());
+                write_message(stream, &NetMessage::GetTransactions(missing_hashes)).await?;
+                // For now, also request the full block as fallback
+                write_message(stream, &NetMessage::GetBlock(hash)).await?;
+            }
+        }
+
+        NetMessage::GetTransactions(hashes) => {
+            let mempool = state.mempool.lock().await;
+            let pending = mempool.get_pending();
+            drop(mempool);
+            let pending_map: HashMap<Hash256, Transaction> = pending.into_iter()
+                .map(|tx| (tx.hash(), tx))
+                .collect();
+
+            let found: Vec<Transaction> = hashes.iter()
+                .filter_map(|h| pending_map.get(h).cloned())
+                .collect();
+            if !found.is_empty() {
+                write_message(stream, &NetMessage::TransactionBatch(found)).await?;
+            }
+        }
+
+        NetMessage::TransactionBatch(txs) => {
+            let chain = state.chain.read().await;
+            let mut mempool = state.mempool.lock().await;
+            for tx in txs {
+                let _ = mempool.validate_and_add(tx, &chain);
+            }
+        }
     }
     Ok(())
 }
@@ -608,7 +998,7 @@ pub async fn start_node(
     tracing::info!("🌐 Listening on {}", listen_addr);
 
     let mut all_seeds: Vec<String> = seed_peers;
-    for seed in SEED_NODES {
+    for seed in seed_nodes() {
         let s = seed.to_string();
         if !all_seeds.contains(&s) { all_seeds.push(s); }
     }
@@ -677,6 +1067,17 @@ pub async fn start_node(
                     if stale { tracing::info!("🔌 Pruning stale peer {}", addr); }
                     !stale
                 });
+
+                // Save anchor connections (best peers we've seen)
+                let peers = state.peers.read().await;
+                let mut anchor_candidates: Vec<String> = peers.values()
+                    .map(|p| p.listen_address.clone())
+                    .collect();
+                drop(peers);
+                anchor_candidates.truncate(MAX_ANCHORS);
+                if !anchor_candidates.is_empty() {
+                    save_anchors(data_dir(), &anchor_candidates);
+                }
             }
         });
     }
@@ -753,12 +1154,13 @@ mod tests {
 
     #[test]
     fn test_message_encode_decode() {
+        let _ = std::panic::catch_unwind(|| init_network(false));
         let msg = NetMessage::Version {
             version: 1, best_height: 42, best_hash: [0xABu8; 32],
             timestamp: 1234567890, listen_port: 9333,
         };
         let encoded = encode_message(&msg);
-        assert_eq!(&encoded[0..4], &TESTNET_MAGIC);
+        assert_eq!(&encoded[0..4], &magic_bytes());
         let len = u32::from_le_bytes(encoded[4..8].try_into().unwrap()) as usize;
         let decoded: NetMessage = bincode::deserialize(&encoded[8..8 + len]).unwrap();
         match decoded {

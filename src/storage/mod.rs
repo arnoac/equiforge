@@ -265,6 +265,13 @@ impl Storage {
         self.db.flush().map_err(|e| StorageError::DbError(e.to_string()))?;
         Ok(())
     }
+
+    /// Clear all data from the database (used during auto-recovery)
+    pub fn clear_all(&self) -> Result<(), StorageError> {
+        self.db.clear().map_err(|e| StorageError::DbError(e.to_string()))?;
+        self.db.flush().map_err(|e| StorageError::DbError(e.to_string()))?;
+        Ok(())
+    }
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────
