@@ -79,13 +79,55 @@ async fn handle_http(mut stream: tokio::net::TcpStream, state: Arc<NodeState>) {
     let mut request_line = String::new();
     if reader.read_line(&mut request_line).await.is_err() { return; }
 
-    // Check if it's a GET request (serve explorer UI)
+    // Check if it's a GET request (serve explorer UI or snapshot)
     if request_line.starts_with("GET") {
+        // Parse the path
+        let path = request_line.split_whitespace().nth(1).unwrap_or("/");
+
         // Drain headers
         loop {
             let mut line = String::new();
             if reader.read_line(&mut line).await.is_err() { break; }
             if line.trim().is_empty() { break; }
+        }
+
+        if path == "/snapshot" || path == "/snapshot.bin" {
+            // Stream chain snapshot as gzip-compressed binary
+            tracing::info!("📸 Snapshot download requested");
+            let chain = state.chain.read().await;
+            let height = chain.height;
+
+            // Build snapshot data
+            let mut data: Vec<u8> = Vec::new();
+            data.extend_from_slice(&1u32.to_le_bytes()); // version
+            data.extend_from_slice(&height.to_le_bytes());
+            data.extend_from_slice(&((height + 1) as u64).to_le_bytes()); // block_count
+            let genesis_hash = chain.genesis_hash();
+            data.extend_from_slice(&genesis_hash);
+
+            for h in 0..=height {
+                if let Some(block) = chain.block_at_height(h) {
+                    let encoded = bincode::serialize(block).unwrap();
+                    data.extend_from_slice(&(encoded.len() as u32).to_le_bytes());
+                    data.extend_from_slice(&encoded);
+                }
+            }
+            drop(chain);
+
+            // Compress
+            use std::io::Write as IoWrite;
+            let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+            encoder.write_all(&data).unwrap();
+            let compressed = encoder.finish().unwrap();
+
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Disposition: attachment; filename=\"snapshot.bin\"\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: {}\r\n\r\n",
+                compressed.len()
+            );
+            let _ = writer.write_all(response.as_bytes()).await;
+            let _ = writer.write_all(&compressed).await;
+            tracing::info!("📸 Snapshot sent: {} blocks, {:.1} MB compressed", height + 1, compressed.len() as f64 / 1_048_576.0);
+            return;
         }
 
         let html = explorer_html();

@@ -32,7 +32,7 @@ pub enum NetMessage {
     GetBlockData(Vec<Hash256>),  // Request full blocks by hash after header validation
     BlockData(Vec<Block>),
     // ─── Compact block relay ───
-    CompactBlock { header: BlockHeader, tx_hashes: Vec<Hash256> },
+    CompactBlock { header: BlockHeader, short_txids: Vec<Hash256>, coinbase: Transaction },
     GetTransactions(Vec<Hash256>), // Request missing txs for compact block
     TransactionBatch(Vec<Transaction>),
 }
@@ -438,6 +438,14 @@ async fn handle_connection(mut stream: TcpStream, state: Arc<NodeState>, peer_ad
     let peer_height = match read_message(&mut stream).await {
         Ok(NetMessage::VersionV2 { version, best_height, genesis_hash, listen_port, .. }) => {
             peer_is_v2 = true;
+
+            // Reject outdated protocol versions
+            if version < MIN_PROTOCOL_VERSION {
+                tracing::warn!("🚫 Rejecting peer {} — protocol v{} too old (minimum v{})", 
+                    peer_addr, version, MIN_PROTOCOL_VERSION);
+                return;
+            }
+
             // Verify genesis match
             if genesis_hash != our_genesis {
                 tracing::warn!("❌ Peer {} has different genesis! Theirs: {} Ours: {}",
@@ -470,24 +478,11 @@ async fn handle_connection(mut stream: TcpStream, state: Arc<NodeState>, peer_ad
             let _ = write_message(&mut stream, &NetMessage::VersionAck).await;
             best_height
         }
-        Ok(NetMessage::Version { version, best_height, listen_port, .. }) => {
-            peer_is_v2 = false;
-            // Old node without genesis — accept but can't verify
-            tracing::info!("  Peer {} v{} at height {} (legacy, no genesis check)", peer_addr, version, best_height);
-            {
-                let peer_ip = peer_addr.split(':').next().unwrap_or("127.0.0.1");
-                let listen_addr = format!("{}:{}", peer_ip, listen_port);
-                let mut peers = state.peers.write().await;
-                peers.insert(peer_addr.clone(), PeerInfo {
-                    address: peer_addr.clone(), listen_address: listen_addr.clone(),
-                    version, best_height, last_seen: now, supports_v2: false,
-                });
-                drop(peers);
-                let mut known = state.known_addresses.write().await;
-                known.insert(listen_addr);
-            }
-            let _ = write_message(&mut stream, &NetMessage::VersionAck).await;
-            best_height
+        Ok(NetMessage::Version { version, listen_port, .. }) => {
+            // Old nodes using legacy Version message are rejected
+            tracing::warn!("🚫 Rejecting peer {} — legacy protocol v{}, must upgrade to v{}", 
+                peer_addr, version, MIN_PROTOCOL_VERSION);
+            return;
         }
         Ok(_) => {
             let mut sb = state.scoreboard.lock().await;
@@ -570,13 +565,14 @@ async fn handle_connection(mut stream: TcpStream, state: Arc<NodeState>, peer_ad
             block_result = block_rx.recv() => {
                 if let Ok(block) = block_result {
                     if peer_is_v2 {
-                        // Send compact block (header + tx hashes) — much smaller
-                        let tx_hashes: Vec<Hash256> = block.transactions.iter()
+                        // Send compact block: full coinbase + hashes of remaining txs
+                        let tx_hashes: Vec<Hash256> = block.transactions[1..].iter()
                             .map(|tx| tx.hash())
                             .collect();
                         let _ = write_message(&mut stream, &NetMessage::CompactBlock {
                             header: block.header.clone(),
-                            tx_hashes,
+                            short_txids: tx_hashes,
+                            coinbase: block.transactions[0].clone(),
                         }).await;
                     } else {
                         let _ = write_message(&mut stream, &NetMessage::NewBlock(block)).await;
@@ -637,7 +633,7 @@ async fn handle_message(
                     }
                 }
                 Err(e) => {
-                    tracing::debug!("Block #{} from {} rejected: {}", height, peer_addr, e);
+                    tracing::warn!("❌ Block #{} from {} rejected: {}", height, peer_addr, e);
                     // Only penalize for truly invalid blocks, not duplicates or stale blocks
                     let is_harmless = matches!(e,
                         crate::core::chain::BlockError::DuplicateBlock |
@@ -707,7 +703,7 @@ async fn handle_message(
                         Ok(_) => {
                             accepted += 1;
                         }
-                        Err(e) => tracing::debug!("Sync block rejected: {}", e),
+                        Err(e) => tracing::warn!("❌ Sync block #{} from {} rejected: {}", block.header.height, peer_addr, e),
                     }
                 }
                 if is_batch_sync {
@@ -872,9 +868,9 @@ async fn handle_message(
         }
 
         NetMessage::BlockData(blocks) => {
-            // Same as Blocks handler — process received full blocks
             let count = blocks.len();
             let mut accepted = 0;
+            let mut last_reject_reason = String::new();
             let chunk_size = 25;
             for chunk in blocks.chunks(chunk_size) {
                 let mut chain = state.chain.write().await;
@@ -882,7 +878,10 @@ async fn handle_message(
                 for block in chunk {
                     match chain.add_block(block.clone()) {
                         Ok(_) => accepted += 1,
-                        Err(e) => tracing::debug!("BlockData rejected: {}", e),
+                        Err(e) => {
+                            last_reject_reason = format!("{}", e);
+                            tracing::warn!("❌ BlockData #{} rejected from {}: {}", block.header.height, peer_addr, e);
+                        }
                     }
                 }
                 chain.set_batch_mode(false);
@@ -900,11 +899,35 @@ async fn handle_message(
             }
             let our_height = state.chain.read().await.height;
             tracing::info!("📥 BlockData: accepted {}/{} from {} (height: {})", accepted, count, peer_addr, our_height);
+
+            // Continue syncing if peer has more blocks
+            let peer_best = {
+                let peers = state.peers.read().await;
+                peers.get(peer_addr).map(|p| p.best_height)
+            };
+            if let Some(best_height) = peer_best {
+                if best_height > our_height {
+                    // If we accepted some blocks, keep going with headers-first
+                    // If we accepted none, fall back to sequential GetBlocks
+                    if accepted > 0 {
+                        write_message(stream, &NetMessage::GetHeaders {
+                            start_height: our_height + 1,
+                            count: (best_height - our_height).min(2000) as u32,
+                        }).await?;
+                    } else {
+                        tracing::info!("📥 BlockData all rejected ({}), falling back to sequential sync from {}", last_reject_reason, peer_addr);
+                        write_message(stream, &NetMessage::GetBlocks {
+                            start_height: our_height + 1,
+                            count: 500,
+                        }).await?;
+                    }
+                }
+            }
         }
 
         // ─── Compact Block Relay ───
 
-        NetMessage::CompactBlock { header, tx_hashes } => {
+        NetMessage::CompactBlock { header, short_txids, coinbase } => {
             let hash = header.hash();
             let height = header.height;
 
@@ -916,11 +939,11 @@ async fn handle_message(
                 }
             }
 
-            // Try to reconstruct the block from our mempool
-            let mut found_txs = Vec::new();
+            // Start with coinbase, then try to find remaining txs from mempool
+            let mut txs = vec![coinbase];
             let mut missing_hashes = Vec::new();
 
-            if !tx_hashes.is_empty() {
+            if !short_txids.is_empty() {
                 let mempool = state.mempool.lock().await;
                 let pending = mempool.get_pending();
                 let pending_map: HashMap<Hash256, &Transaction> = pending.iter()
@@ -928,9 +951,9 @@ async fn handle_message(
                     .collect();
                 drop(mempool);
 
-                for tx_hash in &tx_hashes {
+                for tx_hash in &short_txids {
                     if let Some(tx) = pending_map.get(tx_hash) {
-                        found_txs.push((*tx).clone());
+                        txs.push((*tx).clone());
                     } else {
                         missing_hashes.push(*tx_hash);
                     }
@@ -939,8 +962,7 @@ async fn handle_message(
 
             if missing_hashes.is_empty() {
                 // We have all txs — reconstruct and add the block
-                // Build coinbase + found txs (coinbase should be first in tx_hashes)
-                let block = Block { header, transactions: found_txs };
+                let block = Block { header, transactions: txs };
                 let mut chain = state.chain.write().await;
                 match chain.add_block(block.clone()) {
                     Ok(_) => {
@@ -950,13 +972,11 @@ async fn handle_message(
                         state.new_block_notify.notify_waiters();
                         tracing::info!("📦 Compact block #{} from {} ({})", height, peer_addr, &hex::encode(hash)[..16]);
                     }
-                    Err(e) => tracing::debug!("Compact block #{} rejected: {}", height, e),
+                    Err(e) => tracing::warn!("❌ Compact block #{} from {} rejected: {}", height, peer_addr, e),
                 }
             } else {
-                // Request missing transactions
-                tracing::debug!("Compact block #{}: need {} missing txs", height, missing_hashes.len());
-                write_message(stream, &NetMessage::GetTransactions(missing_hashes)).await?;
-                // For now, also request the full block as fallback
+                // Request missing transactions + full block as fallback
+                tracing::debug!("Compact block #{}: need {} missing txs, requesting full block", height, missing_hashes.len());
                 write_message(stream, &NetMessage::GetBlock(hash)).await?;
             }
         }
@@ -1017,7 +1037,7 @@ pub async fn start_node(
         let state = state.clone();
         let seeds = all_seeds.clone();
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
             loop {
                 interval.tick().await;
 
@@ -1026,7 +1046,7 @@ pub async fn start_node(
 
                 let peer_count = state.peers.read().await.len();
 
-                // Retry seeds if no peers
+                // Retry seeds if no peers (more aggressive — every 30s instead of 60s)
                 if peer_count == 0 && !seeds.is_empty() {
                     tracing::info!("🔄 No peers, retrying seeds...");
                     for seed in &seeds {
@@ -1037,7 +1057,7 @@ pub async fn start_node(
                 }
 
                 // Try discovered peers if below target
-                if peer_count < MAX_OUTBOUND_PEERS {
+                if peer_count > 0 && peer_count < MAX_OUTBOUND_PEERS {
                     let known = state.known_addresses.read().await;
                     let connected: HashSet<String> = {
                         let peers = state.peers.read().await;
@@ -1060,7 +1080,7 @@ pub async fn start_node(
                     }
                 }
 
-                // Prune stale peers
+                // Prune stale peers (no messages for 5 min)
                 let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
                 state.peers.write().await.retain(|addr, info| {
                     let stale = now - info.last_seen > 300;
@@ -1068,7 +1088,7 @@ pub async fn start_node(
                     !stale
                 });
 
-                // Save anchor connections (best peers we've seen)
+                // Save anchor connections
                 let peers = state.peers.read().await;
                 let mut anchor_candidates: Vec<String> = peers.values()
                     .map(|p| p.listen_address.clone())
@@ -1119,9 +1139,14 @@ pub async fn connect_to_peer(state: Arc<NodeState>, addr: &str) {
         if peers.values().any(|p| p.listen_address == addr || p.address == addr) { return; }
     }
     tracing::info!("🔗 Connecting to {}...", addr);
-    match TcpStream::connect(addr).await {
-        Ok(stream) => handle_connection(stream, state, addr.to_string(), true).await,
-        Err(e) => tracing::debug!("Failed to connect to {}: {}", addr, e),
+    // 10 second connection timeout to prevent hanging on dead peers
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        TcpStream::connect(addr)
+    ).await {
+        Ok(Ok(stream)) => handle_connection(stream, state, addr.to_string(), true).await,
+        Ok(Err(e)) => tracing::debug!("Failed to connect to {}: {}", addr, e),
+        Err(_) => tracing::debug!("Connection to {} timed out", addr),
     }
 }
 

@@ -14,7 +14,7 @@ const DEFAULT_DATA_DIR: &str = "equiforge_data";
 const DEFAULT_P2P_PORT: u16 = 9333;
 
 #[derive(Parser)]
-#[command(name = "equiforge", version = "1.0.5")]
+#[command(name = "equiforge", version = "1.0.6")]
 #[command(about = "EquiForge - A fair, accessible blockchain network")]
 struct Cli {
     #[arg(long, global = true)]
@@ -64,6 +64,18 @@ enum Commands {
     Info,
     /// Show connected peers
     Peers,
+    /// Export chain snapshot for fast bootstrap
+    ExportSnapshot {
+        /// Output file path (default: snapshot.bin)
+        #[arg(short, long, default_value = "snapshot.bin")]
+        output: String,
+    },
+    /// Import chain snapshot for fast bootstrap
+    ImportSnapshot {
+        /// Snapshot file path
+        #[arg(short, long, default_value = "snapshot.bin")]
+        input: String,
+    },
     /// Mine blocks for testing (in-memory)
     TestMine {
         #[arg(default_value_t = 5)]
@@ -324,6 +336,188 @@ fn main() {
             }
         }
 
+        Commands::ExportSnapshot { output } => {
+            println!("📸 Exporting chain snapshot...");
+            let chain = open_chain(data_dir);
+            let height = chain.height;
+
+            // Collect all blocks from genesis to tip in order
+            let mut blocks: Vec<Block> = Vec::new();
+            for h in 0..=height {
+                if let Some(block) = chain.block_at_height(h) {
+                    blocks.push(block.clone());
+                } else {
+                    eprintln!("❌ Missing block at height {}! Chain data corrupted.", h);
+                    std::process::exit(1);
+                }
+            }
+
+            // Serialize: [version:u32][height:u64][block_count:u64][blocks...]
+            let mut data: Vec<u8> = Vec::new();
+            // Snapshot format version
+            data.extend_from_slice(&1u32.to_le_bytes());
+            // Chain height
+            data.extend_from_slice(&height.to_le_bytes());
+            // Block count
+            data.extend_from_slice(&(blocks.len() as u64).to_le_bytes());
+            // Genesis hash for verification
+            let genesis_hash = chain.genesis_hash();
+            data.extend_from_slice(&genesis_hash);
+
+            for block in &blocks {
+                let encoded = bincode::serialize(block).unwrap();
+                data.extend_from_slice(&(encoded.len() as u32).to_le_bytes());
+                data.extend_from_slice(&encoded);
+            }
+
+            // Compress with gzip
+            use std::io::Write;
+            let file = std::fs::File::create(&output).unwrap();
+            let mut encoder = flate2::write::GzEncoder::new(file, flate2::Compression::fast());
+            encoder.write_all(&data).unwrap();
+            encoder.finish().unwrap();
+
+            let file_size = std::fs::metadata(&output).unwrap().len();
+            println!("  ✅ Exported {} blocks (height {}) to {}", blocks.len(), height, output);
+            println!("  📦 File size: {:.1} MB ({} bytes raw → {} bytes compressed)",
+                file_size as f64 / 1_048_576.0,
+                data.len(),
+                file_size);
+            println!("\n  Share this file so others can run:");
+            println!("    equiforge import-snapshot -i {}", output);
+        }
+
+        Commands::ImportSnapshot { input } => {
+            if !std::path::Path::new(&input).exists() {
+                eprintln!("❌ Snapshot file not found: {}", input);
+                std::process::exit(1);
+            }
+
+            println!("📸 Importing chain snapshot from {}...", input);
+
+            // Decompress
+            use std::io::Read;
+            let file = std::fs::File::open(&input).unwrap();
+            let mut decoder = flate2::read::GzDecoder::new(file);
+            let mut data = Vec::new();
+            decoder.read_to_end(&mut data).unwrap();
+
+            // Parse header
+            let mut offset = 0;
+            let snap_version = u32::from_le_bytes(data[offset..offset+4].try_into().unwrap());
+            offset += 4;
+            if snap_version != 1 {
+                eprintln!("❌ Unknown snapshot version: {}", snap_version);
+                std::process::exit(1);
+            }
+            let height = u64::from_le_bytes(data[offset..offset+8].try_into().unwrap());
+            offset += 8;
+            let block_count = u64::from_le_bytes(data[offset..offset+8].try_into().unwrap());
+            offset += 8;
+            let mut snap_genesis = [0u8; 32];
+            snap_genesis.copy_from_slice(&data[offset..offset+32]);
+            offset += 32;
+
+            // Verify genesis matches
+            let fresh_chain = Chain::new();
+            let our_genesis = fresh_chain.genesis_hash();
+            drop(fresh_chain);
+            if snap_genesis != our_genesis {
+                eprintln!("❌ Genesis mismatch! Snapshot is from a different network.");
+                eprintln!("   Snapshot: {}", hex::encode(snap_genesis));
+                eprintln!("   Ours:     {}", hex::encode(our_genesis));
+                std::process::exit(1);
+            }
+
+            println!("  📊 Snapshot: {} blocks (height {})", block_count, height);
+            println!("  ✅ Genesis verified");
+
+            // Wipe existing data and import fresh
+            let db_path = std::path::PathBuf::from(data_dir);
+            if db_path.exists() {
+                // Keep wallet.json but remove chain data
+                let wallet_path = db_path.join("wallet.json");
+                let wallet_backup = if wallet_path.exists() {
+                    Some(std::fs::read(&wallet_path).unwrap())
+                } else {
+                    None
+                };
+
+                // Remove chain database files
+                for entry in std::fs::read_dir(&db_path).unwrap() {
+                    let entry = entry.unwrap();
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    if name != "wallet.json" && name != "anchors.json" {
+                        let path = entry.path();
+                        if path.is_dir() {
+                            let _ = std::fs::remove_dir_all(&path);
+                        } else {
+                            let _ = std::fs::remove_file(&path);
+                        }
+                    }
+                }
+
+                // Restore wallet
+                if let Some(wallet_data) = wallet_backup {
+                    std::fs::write(&wallet_path, wallet_data).unwrap();
+                }
+            }
+
+            // Open fresh chain and replay all blocks
+            std::fs::create_dir_all(data_dir).unwrap();
+            let mut chain = Chain::open(data_dir).unwrap();
+            chain.set_batch_mode(true);
+
+            let mut imported = 0u64;
+            let start = std::time::Instant::now();
+
+            for i in 0..block_count {
+                if offset + 4 > data.len() {
+                    eprintln!("❌ Snapshot truncated at block {}", i);
+                    std::process::exit(1);
+                }
+                let block_len = u32::from_le_bytes(data[offset..offset+4].try_into().unwrap()) as usize;
+                offset += 4;
+
+                if offset + block_len > data.len() {
+                    eprintln!("❌ Snapshot truncated at block {} (need {} bytes)", i, block_len);
+                    std::process::exit(1);
+                }
+
+                let block: Block = bincode::deserialize(&data[offset..offset+block_len]).unwrap();
+                offset += block_len;
+
+                // Skip genesis (already loaded)
+                if block.header.height == 0 {
+                    imported += 1;
+                    continue;
+                }
+
+                match chain.add_block(block) {
+                    Ok(_) => {
+                        imported += 1;
+                        if imported % 100 == 0 {
+                            println!("  📥 Imported {}/{} blocks...", imported, block_count);
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("❌ Block {} rejected: {}", i, e);
+                        eprintln!("   Snapshot may be corrupted. Try re-downloading.");
+                        std::process::exit(1);
+                    }
+                }
+            }
+
+            chain.set_batch_mode(false);
+            chain.flush_batch();
+
+            let elapsed = start.elapsed();
+            println!("\n  ✅ Imported {} blocks in {:.1}s", imported, elapsed.as_secs_f64());
+            println!("  📊 Chain height: {} | Tip: {}", chain.height, &hex::encode(chain.tip)[..16]);
+            println!("  💰 UTXOs: {}", chain.utxo_set.len());
+            println!("\n  Run: equiforge node --mine");
+        }
+
         Commands::TestMine { count } => {
             println!("🧪 Test mining {} blocks (in-memory)\n", count);
             let mut chain = Chain::new();
@@ -362,7 +556,7 @@ fn open_chain(data_dir: &str) -> Chain {
     Chain::open(data_dir).unwrap_or_else(|e| { eprintln!("❌ {}", e); std::process::exit(1); })
 }
 
-use equiforge::core::types::{OutPoint, TxOutput};
+use equiforge::core::types::{Block, OutPoint, TxOutput};
 
 // ─── Node ───────────────────────────────────────────────────────────
 
@@ -545,10 +739,10 @@ async fn status_task(state: Arc<NodeState>, stop: Arc<AtomicBool>) {
             peers.values().map(|p| p.best_height).max().unwrap_or(0)
         };
 
-        if h == last_height && best_peer_height > h + 5 && p > 0 {
+        if h == last_height && best_peer_height > h + 10 && p > 0 {
             stuck_count += 1;
-            if stuck_count >= 4 {
-                // Stuck for 2+ minutes with peers ahead — chain is forked
+            if stuck_count >= 6 {
+                // Stuck for 3+ minutes with peers 10+ blocks ahead — chain is forked
                 tracing::warn!("⚠️  Sync appears stuck at height {} (peers at {}). Auto-recovering...", h, best_peer_height);
 
                 // Reset chain to genesis (keeps wallet intact)
@@ -559,8 +753,9 @@ async fn status_task(state: Arc<NodeState>, stop: Arc<AtomicBool>) {
                 stuck_count = 0;
                 tracing::info!("🔄 Chain reset to genesis. Re-syncing from peers...");
 
-                // Disconnect all peers to force fresh handshakes and re-sync
-                state.peers.write().await.clear();
+                // Don't clear peers — existing connections will re-sync
+                // Just notify miner to restart
+                state.new_block_notify.notify_waiters();
             }
         } else {
             stuck_count = 0;

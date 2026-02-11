@@ -27,8 +27,12 @@ pub const MAX_TXS_PER_BLOCK: usize = 10_000;
 /// Initial difficulty: number of leading zero bits required in block hash.
 pub const INITIAL_DIFFICULTY: u32 = 8;
 
-/// Protocol version — increment when chain format changes
-pub const PROTOCOL_VERSION: u32 = 2;
+/// Protocol version — increment when network protocol changes
+pub const PROTOCOL_VERSION: u32 = 4;
+
+/// Minimum protocol version we'll accept connections from
+/// v4 required: fixed difficulty, fixed compact blocks, fixed sync
+pub const MIN_PROTOCOL_VERSION: u32 = 4;
 
 /// PoW algorithm identifier (stored in chain metadata for compatibility checks)
 pub const POW_ALGORITHM: &str = "equihash-x-v1";

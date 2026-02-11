@@ -75,27 +75,13 @@ pub fn calculate_next_difficulty(current: u32, timestamps: &[u64]) -> u32 {
 }
 
 // ─── Cumulative Work ────────────────────────────────────────────────
-//
-// Each block adds 2^difficulty to the cumulative work of its chain.
-// The "best" chain is the one with the most cumulative work, not just
-// the most blocks. This prevents a chain of easy blocks from beating
-// a chain of hard blocks.
 
-/// Calculate the work represented by a single block at a given difficulty.
-/// Returns work as a f64 (since 2^200 doesn't fit in u128).
 fn block_work(difficulty: u32) -> f64 {
     2.0_f64.powi(difficulty as i32)
 }
 
 // ─── Chain ──────────────────────────────────────────────────────────
 
-/// The blockchain with fork tracking and reorg support.
-///
-/// Architecture:
-///   - ALL valid blocks are stored (including side chains)
-///   - `tip` always points to the best chain (most cumulative work)
-///   - When a side chain surpasses the main chain, we reorg:
-///     rebuild UTXO set by replaying blocks along the new best chain
 pub struct Chain {
     /// All known block headers, indexed by hash
     headers: HashMap<Hash256, BlockHeader>,
@@ -176,7 +162,6 @@ impl Chain {
     }
 
     /// Reset chain to genesis, clearing all data but keeping storage backend.
-    /// This is used for auto-recovery when sync is stuck on a wrong fork.
     pub fn reset(&mut self) {
         let had_storage = self.storage.take();
         let genesis = Self::create_genesis_block();
@@ -275,10 +260,13 @@ impl Chain {
         let reward = block_reward(0);
         let coinbase = Transaction::new_coinbase(0, reward, genesis_miner, community_fund);
         let ts = genesis_timestamp();
+        // Genesis version is fixed at 2 (the original protocol version) to ensure
+        // the genesis hash never changes when PROTOCOL_VERSION is bumped
+        let genesis_version: u32 = 2;
         let merkle_root = {
             let tmp = Block {
                 header: BlockHeader {
-                    version: PROTOCOL_VERSION, prev_hash: NULL_HASH, merkle_root: NULL_HASH,
+                    version: genesis_version, prev_hash: NULL_HASH, merkle_root: NULL_HASH,
                     timestamp: ts, difficulty_target: INITIAL_DIFFICULTY,
                     nonce: 0, height: 0,
                 },
@@ -288,7 +276,7 @@ impl Chain {
         };
         Block {
             header: BlockHeader {
-                version: PROTOCOL_VERSION, prev_hash: NULL_HASH, merkle_root,
+                version: genesis_version, prev_hash: NULL_HASH, merkle_root,
                 timestamp: ts, difficulty_target: INITIAL_DIFFICULTY,
                 nonce: 0, height: 0,
             },
@@ -298,9 +286,6 @@ impl Chain {
 
     // ─── Block Acceptance ───────────────────────────────────────────
 
-    /// Validate and add a block. Handles both extending the tip AND side chains.
-    /// If a side chain becomes the best chain, triggers a reorg.
-    /// Returns (block_hash, did_reorg).
     pub fn add_block(&mut self, block: Block) -> Result<Hash256, BlockError> {
         let block_hash = block.header.hash();
 
@@ -332,8 +317,14 @@ impl Chain {
             return Err(BlockError::TimestampTooFarInFuture);
         }
 
-        // 5. Difficulty: compute expected difficulty along THIS block's ancestry
-        let expected_diff = self.difficulty_for_block_on_parent(&parent_hash);
+        // 5. Difficulty: use cached value for tip-extension, full recalc for side chains
+        let expected_diff = if parent_hash == self.tip {
+            // Extending tip — use the cached fractional difficulty (fast path)
+            fractional_to_integer_difficulty(self.fractional_difficulty)
+        } else {
+            // Side chain — must walk back (slow but correct)
+            self.difficulty_for_block_on_parent(&parent_hash)
+        };
         if block.header.difficulty_target != expected_diff {
             return Err(BlockError::InvalidDifficulty { expected: expected_diff, got: block.header.difficulty_target });
         }
@@ -358,11 +349,9 @@ impl Chain {
         if !block.transactions[0].is_coinbase() { return Err(BlockError::NoCoinbase); }
 
         // For blocks extending the current tip, do full UTXO validation now.
-        // For side chain blocks, we validate during reorg replay.
         let extends_tip = parent_hash == self.tip;
 
         if extends_tip {
-            // Full validation against current UTXO set
             let expected_reward = block_reward(block.header.height);
             let total_fees = self.calculate_block_fees(&block)?;
             if block.transactions[0].total_output() > expected_reward + total_fees {
@@ -414,9 +403,7 @@ impl Chain {
 
     // ─── Reorg ──────────────────────────────────────────────────────
 
-    /// Switch the active chain to a new tip by replaying blocks from the fork point.
     fn reorg_to(&mut self, new_tip: Hash256) -> Result<(), BlockError> {
-        // Find the common ancestor
         let old_chain = self.chain_from_tip(self.tip);
         let new_chain = self.chain_from_tip(new_tip);
 
@@ -424,10 +411,9 @@ impl Chain {
         let fork_point = new_chain.iter().find(|h| old_set.contains(*h)).copied()
             .ok_or(BlockError::OrphanBlock)?;
 
-        // Blocks to replay: everything in new_chain above the fork point
         let replay: Vec<Hash256> = new_chain.iter().rev()
             .skip_while(|h| **h != fork_point)
-            .skip(1) // skip fork_point itself
+            .skip(1)
             .copied()
             .collect();
 
@@ -472,7 +458,6 @@ impl Chain {
         Ok(())
     }
 
-    /// Get the chain of block hashes from genesis to the given tip (tip first, genesis last)
     fn chain_from_tip(&self, tip: Hash256) -> Vec<Hash256> {
         let mut chain = Vec::new();
         let mut current = tip;
@@ -488,12 +473,9 @@ impl Chain {
         chain
     }
 
-    /// Rebuild the UTXO set by replaying all blocks from genesis to the given tip
     fn rebuild_utxo_to(&mut self, tip: Hash256) -> Result<(), BlockError> {
         let chain = self.chain_from_tip(tip);
         self.utxo_set = UtxoSet::new();
-
-        // Replay from genesis to tip (chain is in reverse order)
         for hash in chain.iter().rev() {
             let block = self.blocks.get(hash)
                 .ok_or(BlockError::OrphanBlock)?.clone();
@@ -502,15 +484,20 @@ impl Chain {
         Ok(())
     }
 
-    // ─── Difficulty for Side Chains ─────────────────────────────────
+    // ─── Difficulty ─────────────────────────────────────────────────
+
+    /// Calculate difficulty for a block extending the current tip.
+    /// Uses the cached fractional_difficulty — O(1) and always in sync.
+    pub fn next_difficulty(&self) -> u32 {
+        fractional_to_integer_difficulty(self.fractional_difficulty)
+    }
 
     /// Calculate the expected difficulty for a block whose parent is `parent_hash`.
     /// Walks back along that block's ancestry to gather timestamps.
-    /// This is the source of truth used by validation — miners should use this too.
+    /// Used for side-chain validation. O(N) walk.
     pub fn difficulty_for_block_on_parent(&self, parent_hash: &Hash256) -> u32 {
         let mut timestamps = Vec::new();
         let mut current = *parent_hash;
-        let mut frac_diff = INITIAL_DIFFICULTY as f64;
 
         // Walk back to gather timestamps
         loop {
@@ -526,6 +513,7 @@ impl Chain {
         timestamps.reverse(); // oldest first
 
         // Replay LWMA to get fractional difficulty at this point
+        let mut frac_diff = INITIAL_DIFFICULTY as f64;
         for end in 2..=timestamps.len() {
             frac_diff = calculate_next_difficulty_fractional(frac_diff, &timestamps[..end]);
         }
@@ -581,28 +569,30 @@ impl Chain {
             return Err(BlockError::InvalidTransaction("outputs exceed inputs".into()));
         }
         if input_sum - output_sum < MIN_TX_FEE {
-            return Err(BlockError::InvalidTransaction("fee below minimum".into()));
+            return Err(BlockError::InvalidTransaction(format!("fee too low: {} < {}", input_sum - output_sum, MIN_TX_FEE)));
         }
         Ok(())
     }
 
     fn calculate_block_fees(&self, block: &Block) -> Result<u64, BlockError> {
-        let mut total: u64 = 0;
+        let mut total_fees: u64 = 0;
         for tx in &block.transactions[1..] {
             let mut input_sum: u64 = 0;
             for input in &tx.inputs {
                 let utxo = self.utxo_set.get(&input.previous_output)
-                    .ok_or_else(|| BlockError::InvalidTransaction("UTXO not found".into()))?;
+                    .ok_or_else(|| BlockError::InvalidTransaction("UTXO not found for fee calc".into()))?;
                 input_sum += utxo.output.amount;
             }
             let output_sum = tx.total_output();
             if output_sum > input_sum {
                 return Err(BlockError::InvalidTransaction("outputs exceed inputs".into()));
             }
-            total += input_sum - output_sum;
+            total_fees += input_sum - output_sum;
         }
-        Ok(total)
+        Ok(total_fees)
     }
+
+    // ─── Persistence ────────────────────────────────────────────────
 
     fn persist_state(&self, block_hash: &Hash256, block: &Block) {
         if self.batch_mode { return; }
@@ -614,7 +604,6 @@ impl Chain {
             let _ = storage.put_height(self.height);
             let _ = storage.put_timestamps(&self.recent_timestamps);
             let _ = storage.put_fractional_difficulty(self.fractional_difficulty);
-            // On reorg we'd need to rewrite all UTXOs; for now just update tip chain
             for tx in &block.transactions {
                 if !tx.is_coinbase() {
                     for input in &tx.inputs { let _ = storage.remove_utxo(&input.previous_output); }
@@ -629,29 +618,23 @@ impl Chain {
         }
     }
 
-    /// Enable or disable batch mode (defers disk writes)
     pub fn set_batch_mode(&mut self, enabled: bool) {
         self.batch_mode = enabled;
     }
 
-    /// Flush all pending state to disk after a batch sync
     pub fn flush_batch(&self) {
         if let Some(ref storage) = self.storage {
-            // Write all blocks and headers
             for (hash, block) in &self.blocks {
                 let _ = storage.put_block(hash, block);
                 let _ = storage.put_header(hash, &block.header);
             }
-            // Write height index
             for (h, hash) in &self.height_index {
                 let _ = storage.put_height_index(*h, hash);
             }
-            // Write chain state
             let _ = storage.put_tip(&self.tip);
             let _ = storage.put_height(self.height);
             let _ = storage.put_timestamps(&self.recent_timestamps);
             let _ = storage.put_fractional_difficulty(self.fractional_difficulty);
-            // Write all UTXOs
             for (op, entry) in self.utxo_set.iter() {
                 let _ = storage.put_utxo(op, entry);
             }
@@ -661,11 +644,6 @@ impl Chain {
     }
 
     // ─── Public Accessors ───────────────────────────────────────────
-
-    pub fn next_difficulty(&self) -> u32 {
-        // Use the same calculation as the validator to prevent mismatch
-        self.difficulty_for_block_on_parent(&self.tip)
-    }
 
     pub fn fractional_difficulty(&self) -> f64 { self.fractional_difficulty }
 
@@ -686,13 +664,10 @@ impl Chain {
         self.validate_transaction(tx, self.height + 1)
     }
 
-    /// Get number of known blocks (including side chains)
     pub fn total_known_blocks(&self) -> usize { self.blocks.len() }
 
-    /// Get the block at a given hash
     pub fn block_by_hash(&self, hash: &Hash256) -> Option<&Block> { self.blocks.get(hash) }
 
-    /// Get headers for a range of heights on the active chain
     pub fn headers_in_range(&self, start: u64, count: u32) -> Vec<BlockHeader> {
         let mut headers = Vec::new();
         let end = (start + count as u64).min(self.height + 1);
@@ -706,9 +681,6 @@ impl Chain {
         headers
     }
 
-    /// Validate a chain of headers without requiring full block data.
-    /// Returns the hashes of headers that are valid and extend our known chain.
-    /// This is used for headers-first sync: validate headers first, then download blocks.
     pub fn validate_header_chain(&self, headers: &[BlockHeader]) -> Vec<Hash256> {
         let mut valid = Vec::new();
         let mut prev_hash = if let Some(first) = headers.first() {
@@ -720,19 +692,16 @@ impl Chain {
         for header in headers {
             let hash = header.hash();
 
-            // Already have it
             if self.headers.contains_key(&hash) {
                 prev_hash = hash;
                 valid.push(hash);
                 continue;
             }
 
-            // Parent must exist (either in our chain or earlier in this batch)
             if !self.headers.contains_key(&header.prev_hash) && header.prev_hash != prev_hash {
                 break;
             }
 
-            // PoW must be valid
             if !header.meets_difficulty() {
                 break;
             }
@@ -743,14 +712,12 @@ impl Chain {
         valid
     }
 
-    /// Get multiple blocks by hash
     pub fn blocks_by_hashes(&self, hashes: &[Hash256]) -> Vec<Block> {
         hashes.iter()
             .filter_map(|h| self.blocks.get(h).cloned())
             .collect()
     }
 
-    /// Get the genesis block hash
     pub fn genesis_hash(&self) -> Hash256 {
         self.height_index.get(&0).copied().unwrap_or(NULL_HASH)
     }
