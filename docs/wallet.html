@@ -1,0 +1,908 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EquiForge Wallet</title>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=JetBrains+Mono:wght@300;400;500&family=Sora:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+  --bg: #050508;
+  --bg-card: #0d0d16;
+  --bg-input: #0a0a12;
+  --border: #1a1a2e;
+  --border-focus: #00f0ff55;
+  --cyan: #00f0ff;
+  --cyan-dim: #00f0ff44;
+  --cyan-glow: #00f0ff18;
+  --green: #00ff88;
+  --green-dim: #00ff8844;
+  --red: #ff4466;
+  --amber: #ffaa00;
+  --text: #c8c8dc;
+  --text-dim: #5a5a78;
+  --text-bright: #ffffff;
+}
+
+body {
+  font-family: 'Sora', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  line-height: 1.6;
+}
+
+/* ═══ HEADER ═══ */
+.header {
+  padding: 1.2rem 2rem;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: rgba(5, 5, 8, 0.9);
+  backdrop-filter: blur(20px);
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+
+.logo {
+  font-family: 'Orbitron', monospace;
+  font-weight: 900;
+  font-size: 1.2rem;
+  color: var(--cyan);
+  text-decoration: none;
+  letter-spacing: 2px;
+}
+
+.logo span { color: var(--text-bright); }
+.logo small { font-size: 0.6rem; color: var(--text-dim); font-weight: 400; letter-spacing: 1px; margin-left: 0.5rem; }
+
+.network-badge {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.7rem;
+  color: var(--text-dim);
+}
+
+.network-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--red);
+}
+
+.network-dot.online {
+  background: var(--green);
+  box-shadow: 0 0 8px var(--green-dim);
+  animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+/* ═══ LAYOUT ═══ */
+.container {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 2rem 1.5rem;
+}
+
+/* ═══ ADDRESS INPUT ═══ */
+.address-section {
+  margin-bottom: 2rem;
+}
+
+.address-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.7rem;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  margin-bottom: 0.5rem;
+}
+
+.address-row {
+  display: flex;
+  gap: 0.8rem;
+}
+
+.address-input {
+  flex: 1;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.9rem 1.2rem;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.85rem;
+  color: var(--text-bright);
+  outline: none;
+  transition: border-color 0.3s, box-shadow 0.3s;
+}
+
+.address-input:focus {
+  border-color: var(--cyan);
+  box-shadow: 0 0 20px var(--cyan-glow);
+}
+
+.address-input::placeholder { color: var(--text-dim); }
+
+.btn-track {
+  background: linear-gradient(135deg, var(--cyan), #0088aa);
+  color: var(--bg);
+  border: none;
+  border-radius: 10px;
+  padding: 0 2rem;
+  font-family: 'Orbitron', monospace;
+  font-weight: 700;
+  font-size: 0.75rem;
+  letter-spacing: 2px;
+  cursor: pointer;
+  transition: all 0.3s;
+  box-shadow: 0 0 20px var(--cyan-dim);
+  white-space: nowrap;
+}
+
+.btn-track:hover {
+  box-shadow: 0 0 40px var(--cyan-dim);
+  transform: translateY(-2px);
+}
+
+.btn-track:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.saved-addresses {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.8rem;
+  flex-wrap: wrap;
+}
+
+.saved-addr {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.3rem 0.8rem;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.65rem;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.saved-addr:hover { border-color: var(--cyan-dim); color: var(--cyan); }
+
+.saved-addr .remove {
+  color: var(--red);
+  font-size: 0.8rem;
+  cursor: pointer;
+  opacity: 0.5;
+}
+
+.saved-addr .remove:hover { opacity: 1; }
+
+/* ═══ BALANCE HERO ═══ */
+.balance-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 3rem;
+  text-align: center;
+  margin-bottom: 2rem;
+  position: relative;
+  overflow: hidden;
+}
+
+.balance-card::before {
+  content: '';
+  position: absolute;
+  top: -1px; left: 0; right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--cyan), var(--green), var(--cyan), transparent);
+  background-size: 300% 100%;
+  animation: gradient-flow 5s linear infinite;
+}
+
+@keyframes gradient-flow {
+  0% { background-position: 0% 0; }
+  100% { background-position: 300% 0; }
+}
+
+.balance-label {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 3px;
+  margin-bottom: 0.5rem;
+}
+
+.balance-amount {
+  font-family: 'Orbitron', monospace;
+  font-size: clamp(2.5rem, 8vw, 4rem);
+  font-weight: 900;
+  color: var(--text-bright);
+  line-height: 1.2;
+}
+
+.balance-amount .unit {
+  font-size: 0.4em;
+  color: var(--cyan);
+  margin-left: 0.3em;
+}
+
+.balance-sub {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  margin-top: 0.8rem;
+}
+
+.balance-addr {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.7rem;
+  color: var(--text-dim);
+  margin-top: 1rem;
+  word-break: break-all;
+  opacity: 0.6;
+}
+
+/* ═══ STATS ROW ═══ */
+.stats-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 1rem;
+  margin-bottom: 2rem;
+}
+
+.stat-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 1.5rem;
+  text-align: center;
+}
+
+.stat-card-value {
+  font-family: 'Orbitron', monospace;
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: var(--text-bright);
+}
+
+.stat-card-label {
+  font-size: 0.65rem;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  margin-top: 0.3rem;
+}
+
+/* ═══ UTXO TABLE ═══ */
+.section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.section-title {
+  font-family: 'Orbitron', monospace;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-bright);
+  letter-spacing: 1px;
+}
+
+.section-count {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.7rem;
+  color: var(--text-dim);
+}
+
+.utxo-list {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  overflow: hidden;
+  margin-bottom: 2rem;
+}
+
+.utxo-header {
+  display: grid;
+  grid-template-columns: 1fr 120px 80px 80px;
+  padding: 0.8rem 1.2rem;
+  background: rgba(255,255,255,0.02);
+  border-bottom: 1px solid var(--border);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.65rem;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.utxo-row {
+  display: grid;
+  grid-template-columns: 1fr 120px 80px 80px;
+  padding: 0.8rem 1.2rem;
+  border-bottom: 1px solid rgba(255,255,255,0.03);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.75rem;
+  align-items: center;
+  transition: background 0.2s;
+}
+
+.utxo-row:hover { background: rgba(0, 240, 255, 0.03); }
+.utxo-row:last-child { border-bottom: none; }
+
+.utxo-txid {
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.utxo-amount {
+  color: var(--green);
+  font-weight: 500;
+  text-align: right;
+}
+
+.utxo-height {
+  color: var(--text-dim);
+  text-align: right;
+}
+
+.utxo-type {
+  text-align: right;
+}
+
+.badge {
+  display: inline-block;
+  padding: 0.15rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.6rem;
+  font-weight: 500;
+  letter-spacing: 1px;
+}
+
+.badge-cb {
+  background: rgba(255, 170, 0, 0.1);
+  color: var(--amber);
+  border: 1px solid rgba(255, 170, 0, 0.2);
+}
+
+.badge-tx {
+  background: rgba(0, 240, 255, 0.1);
+  color: var(--cyan);
+  border: 1px solid rgba(0, 240, 255, 0.2);
+}
+
+.badge-immature {
+  background: rgba(255, 68, 102, 0.1);
+  color: var(--red);
+  border: 1px solid rgba(255, 68, 102, 0.2);
+}
+
+/* ═══ MINING REWARDS ═══ */
+.rewards-chart {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 1.5rem;
+  margin-bottom: 2rem;
+}
+
+.chart-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 120px;
+  margin-top: 1rem;
+}
+
+.chart-bar {
+  flex: 1;
+  background: linear-gradient(to top, var(--cyan), var(--green));
+  border-radius: 3px 3px 0 0;
+  min-height: 2px;
+  position: relative;
+  transition: all 0.3s;
+  opacity: 0.7;
+}
+
+.chart-bar:hover {
+  opacity: 1;
+  box-shadow: 0 0 10px var(--cyan-dim);
+}
+
+.chart-bar .tooltip {
+  display: none;
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.3rem 0.6rem;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.65rem;
+  color: var(--text-bright);
+  white-space: nowrap;
+  z-index: 10;
+}
+
+.chart-bar:hover .tooltip { display: block; }
+
+.chart-label-row {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 0.5rem;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.6rem;
+  color: var(--text-dim);
+}
+
+/* ═══ EMPTY STATE ═══ */
+.empty-state {
+  text-align: center;
+  padding: 4rem 2rem;
+}
+
+.empty-icon {
+  font-size: 3rem;
+  margin-bottom: 1rem;
+  opacity: 0.3;
+}
+
+.empty-title {
+  font-family: 'Orbitron', monospace;
+  font-size: 1.1rem;
+  color: var(--text-dim);
+  margin-bottom: 0.5rem;
+}
+
+.empty-desc {
+  font-size: 0.85rem;
+  color: var(--text-dim);
+  opacity: 0.6;
+}
+
+/* ═══ LOADING ═══ */
+.loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 2rem;
+  color: var(--text-dim);
+  font-size: 0.85rem;
+}
+
+.spinner {
+  width: 16px; height: 16px;
+  border: 2px solid var(--border);
+  border-top: 2px solid var(--cyan);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ═══ ERROR ═══ */
+.error-msg {
+  background: rgba(255, 68, 102, 0.08);
+  border: 1px solid rgba(255, 68, 102, 0.2);
+  border-radius: 10px;
+  padding: 1rem 1.5rem;
+  color: var(--red);
+  font-size: 0.85rem;
+  margin-bottom: 1.5rem;
+  display: none;
+}
+
+/* ═══ REFRESH ═══ */
+.auto-refresh {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.65rem;
+  color: var(--text-dim);
+  text-align: center;
+  margin-top: 2rem;
+  opacity: 0.5;
+}
+
+/* ═══ RESPONSIVE ═══ */
+@media (max-width: 640px) {
+  .utxo-header, .utxo-row {
+    grid-template-columns: 1fr 90px 60px;
+  }
+  .utxo-header > :nth-child(4),
+  .utxo-row > :nth-child(4) { display: none; }
+  .address-row { flex-direction: column; }
+  .btn-track { padding: 0.9rem; }
+  .balance-card { padding: 2rem 1.5rem; }
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <a href="/" class="logo">EQUI<span>FORGE</span><small>WALLET</small></a>
+  <div class="network-badge">
+    <div class="network-dot" id="net-dot"></div>
+    <span id="net-status">Connecting...</span>
+  </div>
+</div>
+
+<div class="container">
+
+  <!-- ADDRESS INPUT -->
+  <div class="address-section">
+    <div class="address-label">Wallet Address</div>
+    <div class="address-row">
+      <input type="text" class="address-input" id="address-input"
+        placeholder="Enter your EQF address (starts with 4...)" spellcheck="false" autocomplete="off">
+      <button class="btn-track" id="btn-track" onclick="trackAddress()">TRACK</button>
+    </div>
+    <div class="saved-addresses" id="saved-addresses"></div>
+  </div>
+
+  <div class="error-msg" id="error-msg"></div>
+
+  <!-- CONTENT (hidden until address entered) -->
+  <div id="wallet-content" style="display:none;">
+
+    <!-- BALANCE -->
+    <div class="balance-card">
+      <div class="balance-label">Total Balance</div>
+      <div class="balance-amount" id="balance">0<span class="unit">EQF</span></div>
+      <div class="balance-sub" id="balance-sub"></div>
+      <div class="balance-addr" id="balance-addr"></div>
+    </div>
+
+    <!-- STATS -->
+    <div class="stats-row">
+      <div class="stat-card">
+        <div class="stat-card-value" id="st-utxos">0</div>
+        <div class="stat-card-label">UTXOs</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-card-value" id="st-mined">0</div>
+        <div class="stat-card-label">Blocks Mined</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-card-value" id="st-mature">0</div>
+        <div class="stat-card-label">Spendable EQF</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-card-value" id="st-immature">0</div>
+        <div class="stat-card-label">Immature EQF</div>
+      </div>
+    </div>
+
+    <!-- MINING REWARDS CHART -->
+    <div class="rewards-chart" id="rewards-chart" style="display:none;">
+      <div class="section-header">
+        <div class="section-title">⛏ MINING REWARDS</div>
+        <div class="section-count" id="chart-total"></div>
+      </div>
+      <div class="chart-bars" id="chart-bars"></div>
+      <div class="chart-label-row">
+        <span>Oldest</span>
+        <span>Most Recent</span>
+      </div>
+    </div>
+
+    <!-- UTXO LIST -->
+    <div class="section-header">
+      <div class="section-title">UNSPENT OUTPUTS</div>
+      <div class="section-count" id="utxo-count"></div>
+    </div>
+    <div class="utxo-list" id="utxo-list">
+      <div class="utxo-header">
+        <div>Transaction</div>
+        <div style="text-align:right">Amount</div>
+        <div style="text-align:right">Block</div>
+        <div style="text-align:right">Type</div>
+      </div>
+      <div id="utxo-rows"></div>
+    </div>
+
+  </div>
+
+  <!-- EMPTY STATE -->
+  <div id="empty-state" class="empty-state">
+    <div class="empty-icon">⛏</div>
+    <div class="empty-title">Track Your Mining Rewards</div>
+    <div class="empty-desc">Enter your EquiForge wallet address above to see your balance, UTXOs, and mining history.<br><br>Your address is shown when you run <code style="color:var(--cyan);background:var(--bg-card);padding:0.2rem 0.5rem;border-radius:4px;font-family:'JetBrains Mono',monospace;font-size:0.8rem;">equiforge wallet show</code></div>
+  </div>
+
+  <div class="auto-refresh" id="auto-refresh" style="display:none;">Auto-refreshes every 30 seconds</div>
+
+</div>
+
+<script>
+const NODE_URL = 'http://129.80.239.237:9334';
+const COINBASE_MATURITY = 100;
+const COIN = 100_000_000;
+
+let currentAddress = '';
+let refreshInterval = null;
+let chainHeight = 0;
+
+// ═══ LOCAL STORAGE ═══
+function getSavedAddresses() {
+  try { return JSON.parse(localStorage.getItem('eqf_addresses') || '[]'); } catch { return []; }
+}
+
+function saveAddress(addr) {
+  const addrs = getSavedAddresses();
+  if (!addrs.includes(addr)) { addrs.unshift(addr); if (addrs.length > 5) addrs.pop(); }
+  localStorage.setItem('eqf_addresses', JSON.stringify(addrs));
+  renderSaved();
+}
+
+function removeAddress(addr) {
+  const addrs = getSavedAddresses().filter(a => a !== addr);
+  localStorage.setItem('eqf_addresses', JSON.stringify(addrs));
+  renderSaved();
+}
+
+function renderSaved() {
+  const el = document.getElementById('saved-addresses');
+  const addrs = getSavedAddresses();
+  el.innerHTML = addrs.map(a => `
+    <div class="saved-addr" onclick="loadAddress('${a}')">
+      ${a.slice(0, 8)}...${a.slice(-6)}
+      <span class="remove" onclick="event.stopPropagation();removeAddress('${a}')">×</span>
+    </div>
+  `).join('');
+}
+
+function loadAddress(addr) {
+  document.getElementById('address-input').value = addr;
+  trackAddress();
+}
+
+// ═══ RPC ═══
+async function rpc(method, params) {
+  const res = await fetch(NODE_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ method, params, id: 1 }),
+  });
+  const data = await res.json();
+  if (data.error) throw new Error(data.error.message || data.error);
+  return data.result;
+}
+
+// ═══ TRACK ═══
+async function trackAddress() {
+  const input = document.getElementById('address-input');
+  const addr = input.value.trim();
+  if (!addr) return;
+
+  currentAddress = addr;
+  showError('');
+
+  document.getElementById('btn-track').disabled = true;
+  document.getElementById('btn-track').textContent = '...';
+
+  try {
+    // Get chain info first
+    const info = await rpc('getinfo', []);
+    chainHeight = info.height;
+
+    // Update network status
+    document.getElementById('net-dot').classList.add('online');
+    document.getElementById('net-status').textContent = `Height ${chainHeight.toLocaleString()} · ${info.peers} peers`;
+
+    // Get balance
+    const bal = await rpc('getbalance', [addr]);
+
+    // Get UTXOs
+    const utxos = await rpc('listunspent', [addr]);
+
+    saveAddress(addr);
+    renderWallet(addr, bal, utxos);
+
+    document.getElementById('wallet-content').style.display = 'block';
+    document.getElementById('empty-state').style.display = 'none';
+    document.getElementById('auto-refresh').style.display = 'block';
+
+    // Auto-refresh
+    if (refreshInterval) clearInterval(refreshInterval);
+    refreshInterval = setInterval(() => refreshWallet(), 30000);
+
+  } catch (e) {
+    showError('Could not connect to node. Make sure the EquiForge node is running.');
+    document.getElementById('net-dot').classList.remove('online');
+    document.getElementById('net-status').textContent = 'Offline';
+  }
+
+  document.getElementById('btn-track').disabled = false;
+  document.getElementById('btn-track').textContent = 'TRACK';
+}
+
+async function refreshWallet() {
+  if (!currentAddress) return;
+  try {
+    const info = await rpc('getinfo', []);
+    chainHeight = info.height;
+    document.getElementById('net-status').textContent = `Height ${chainHeight.toLocaleString()} · ${info.peers} peers`;
+    const bal = await rpc('getbalance', [currentAddress]);
+    const utxos = await rpc('listunspent', [currentAddress]);
+    renderWallet(currentAddress, bal, utxos);
+  } catch (e) { /* silent fail on refresh */ }
+}
+
+// ═══ RENDER ═══
+function formatEQF(baseUnits) {
+  const whole = Math.floor(baseUnits / COIN);
+  const frac = baseUnits % COIN;
+  if (frac === 0) return whole.toLocaleString();
+  const fracStr = frac.toString().padStart(8, '0').replace(/0+$/, '');
+  return whole.toLocaleString() + '.' + fracStr;
+}
+
+function renderWallet(addr, bal, utxos) {
+  const utxoList = Array.isArray(utxos) ? utxos : (utxos.utxos || []);
+  const totalBase = bal.balance_base || 0;
+
+  // Calculate mature vs immature
+  let matureBase = 0;
+  let immatureBase = 0;
+  let blocksMined = 0;
+  const coinbaseUtxos = [];
+
+  for (const u of utxoList) {
+    const isCoinbase = u.coinbase || false;
+    const height = u.height || 0;
+    const amount = u.amount_base || 0;
+
+    if (isCoinbase) {
+      blocksMined++;
+      coinbaseUtxos.push({ height, amount });
+      if (chainHeight - height >= COINBASE_MATURITY) {
+        matureBase += amount;
+      } else {
+        immatureBase += amount;
+      }
+    } else {
+      matureBase += amount;
+    }
+  }
+
+  // Balance
+  document.getElementById('balance').innerHTML = formatEQF(totalBase) + '<span class="unit">EQF</span>';
+  document.getElementById('balance-sub').textContent = totalBase.toLocaleString() + ' base units';
+  document.getElementById('balance-addr').textContent = addr;
+
+  // Stats
+  document.getElementById('st-utxos').textContent = utxoList.length;
+  document.getElementById('st-mined').textContent = blocksMined;
+  document.getElementById('st-mature').textContent = formatEQF(matureBase);
+  document.getElementById('st-immature').textContent = formatEQF(immatureBase);
+
+  // Mining chart
+  if (coinbaseUtxos.length > 0) {
+    document.getElementById('rewards-chart').style.display = 'block';
+    renderChart(coinbaseUtxos);
+  } else {
+    document.getElementById('rewards-chart').style.display = 'none';
+  }
+
+  // UTXO rows
+  document.getElementById('utxo-count').textContent = utxoList.length + ' outputs';
+  const rowsEl = document.getElementById('utxo-rows');
+
+  if (utxoList.length === 0) {
+    rowsEl.innerHTML = '<div style="padding:2rem;text-align:center;color:var(--text-dim);font-size:0.85rem;">No UTXOs found for this address</div>';
+    return;
+  }
+
+  // Sort by height descending
+  const sorted = [...utxoList].sort((a, b) => (b.height || 0) - (a.height || 0));
+
+  rowsEl.innerHTML = sorted.map(u => {
+    const txid = u.txid || '';
+    const amount = u.amount_base || 0;
+    const height = u.height || 0;
+    const isCoinbase = u.coinbase || false;
+    const isImmature = isCoinbase && (chainHeight - height < COINBASE_MATURITY);
+
+    let badge;
+    if (isImmature) badge = '<span class="badge badge-immature">IMMATURE</span>';
+    else if (isCoinbase) badge = '<span class="badge badge-cb">COINBASE</span>';
+    else badge = '<span class="badge badge-tx">TX</span>';
+
+    return `<div class="utxo-row">
+      <div class="utxo-txid">${txid.slice(0, 16)}...${txid.slice(-8)}</div>
+      <div class="utxo-amount">${formatEQF(amount)}</div>
+      <div class="utxo-height">#${height}</div>
+      <div class="utxo-type">${badge}</div>
+    </div>`;
+  }).join('');
+}
+
+function renderChart(coinbaseUtxos) {
+  const sorted = [...coinbaseUtxos].sort((a, b) => a.height - b.height);
+  const maxAmount = Math.max(...sorted.map(u => u.amount));
+  const total = sorted.reduce((s, u) => s + u.amount, 0);
+
+  document.getElementById('chart-total').textContent = formatEQF(total) + ' EQF total';
+
+  // Group into bars (max 50 bars)
+  let bars;
+  if (sorted.length <= 50) {
+    bars = sorted.map(u => ({ amount: u.amount, height: u.height, count: 1 }));
+  } else {
+    const groupSize = Math.ceil(sorted.length / 50);
+    bars = [];
+    for (let i = 0; i < sorted.length; i += groupSize) {
+      const group = sorted.slice(i, i + groupSize);
+      bars.push({
+        amount: group.reduce((s, u) => s + u.amount, 0),
+        height: group[0].height,
+        count: group.length,
+      });
+    }
+  }
+
+  const maxBar = Math.max(...bars.map(b => b.amount));
+  const barsEl = document.getElementById('chart-bars');
+  barsEl.innerHTML = bars.map(b => {
+    const pct = (b.amount / maxBar) * 100;
+    const label = b.count > 1 ? `${formatEQF(b.amount)} EQF (${b.count} blocks)` : `${formatEQF(b.amount)} EQF @ #${b.height}`;
+    return `<div class="chart-bar" style="height:${Math.max(pct, 2)}%">
+      <div class="tooltip">${label}</div>
+    </div>`;
+  }).join('');
+}
+
+function showError(msg) {
+  const el = document.getElementById('error-msg');
+  if (msg) { el.textContent = msg; el.style.display = 'block'; }
+  else { el.style.display = 'none'; }
+}
+
+// ═══ INIT ═══
+renderSaved();
+
+// Enter key
+document.getElementById('address-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') trackAddress();
+});
+
+// Check if saved address exists
+const saved = getSavedAddresses();
+if (saved.length > 0) {
+  document.getElementById('address-input').value = saved[0];
+  trackAddress();
+}
+
+// Check node status
+(async () => {
+  try {
+    const info = await rpc('getinfo', []);
+    document.getElementById('net-dot').classList.add('online');
+    document.getElementById('net-status').textContent = `Height ${info.height.toLocaleString()} · ${info.peers} peers`;
+  } catch {
+    document.getElementById('net-status').textContent = 'Offline';
+  }
+})();
+</script>
+
+</body>
+</html>
