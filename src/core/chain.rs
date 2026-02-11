@@ -262,7 +262,7 @@ impl Chain {
         let ts = genesis_timestamp();
         // Genesis version is fixed at 2 (the original protocol version) to ensure
         // the genesis hash never changes when PROTOCOL_VERSION is bumped
-        let genesis_version: u32 = 2;
+        let genesis_version: u32 = 3;
         let merkle_root = {
             let tmp = Block {
                 header: BlockHeader {
