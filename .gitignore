@@ -1,0 +1,7 @@
+/target
+equiforge_data/
+node2_data/
+node3_data/
+*.ppk
+*.key
+Cargo.lock
