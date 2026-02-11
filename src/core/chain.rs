@@ -506,7 +506,8 @@ impl Chain {
 
     /// Calculate the expected difficulty for a block whose parent is `parent_hash`.
     /// Walks back along that block's ancestry to gather timestamps.
-    fn difficulty_for_block_on_parent(&self, parent_hash: &Hash256) -> u32 {
+    /// This is the source of truth used by validation — miners should use this too.
+    pub fn difficulty_for_block_on_parent(&self, parent_hash: &Hash256) -> u32 {
         let mut timestamps = Vec::new();
         let mut current = *parent_hash;
         let mut frac_diff = INITIAL_DIFFICULTY as f64;
@@ -662,7 +663,8 @@ impl Chain {
     // ─── Public Accessors ───────────────────────────────────────────
 
     pub fn next_difficulty(&self) -> u32 {
-        fractional_to_integer_difficulty(self.fractional_difficulty)
+        // Use the same calculation as the validator to prevent mismatch
+        self.difficulty_for_block_on_parent(&self.tip)
     }
 
     pub fn fractional_difficulty(&self) -> f64 { self.fractional_difficulty }

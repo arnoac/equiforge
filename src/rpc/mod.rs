@@ -424,176 +424,597 @@ fn explorer_html() -> String {
 <html lang="en">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>EquiForge Block Explorer</title>
+<title>EquiForge Explorer</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <style>
+:root {
+  --bg-primary: #06080d;
+  --bg-secondary: #0c1018;
+  --bg-card: #111720;
+  --bg-card-hover: #161d2a;
+  --border: #1c2435;
+  --border-focus: #3b82f6;
+  --text-primary: #e8ecf4;
+  --text-secondary: #7a8599;
+  --text-muted: #4a5568;
+  --accent: #3b82f6;
+  --accent-glow: rgba(59,130,246,0.15);
+  --green: #22c55e;
+  --green-dim: rgba(34,197,94,0.12);
+  --amber: #f59e0b;
+  --amber-dim: rgba(245,158,11,0.12);
+  --red: #ef4444;
+  --red-dim: rgba(239,68,68,0.12);
+  --cyan: #06b6d4;
+  --cyan-dim: rgba(6,182,212,0.1);
+}
 *{margin:0;padding:0;box-sizing:border-box}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,monospace;background:#0a0e17;color:#c9d1d9;min-height:100vh}
-.header{background:linear-gradient(135deg,#161b22 0%,#0d1117 100%);border-bottom:1px solid #30363d;padding:20px 32px}
-.header h1{font-size:24px;color:#58a6ff;font-weight:600}
-.header span{color:#8b949e;font-size:13px;margin-left:12px}
-.container{max-width:1100px;margin:0 auto;padding:24px}
-.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:24px}
-.stat{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:16px}
-.stat .label{color:#8b949e;font-size:12px;text-transform:uppercase;letter-spacing:0.5px}
-.stat .value{color:#f0f6fc;font-size:22px;font-weight:600;margin-top:4px}
-.stat .value.green{color:#3fb950}
-.stat .value.blue{color:#58a6ff}
-.card{background:#161b22;border:1px solid #30363d;border-radius:8px;margin-bottom:16px;overflow:hidden}
-.card-header{padding:12px 16px;border-bottom:1px solid #30363d;display:flex;justify-content:space-between;align-items:center}
-.card-header h2{font-size:15px;color:#f0f6fc}
-.card-body{padding:16px}
+body{font-family:'Outfit',sans-serif;background:var(--bg-primary);color:var(--text-primary);min-height:100vh;overflow-x:hidden}
+.mono{font-family:'JetBrains Mono',monospace}
+
+/* ─── Header ─── */
+.header{
+  background:var(--bg-secondary);
+  border-bottom:1px solid var(--border);
+  padding:0 32px;
+  height:64px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  position:sticky;top:0;z-index:100;
+  backdrop-filter:blur(12px);
+}
+.header-left{display:flex;align-items:center;gap:16px}
+.logo{
+  font-size:20px;font-weight:700;letter-spacing:-0.5px;
+  background:linear-gradient(135deg,#3b82f6,#06b6d4);
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;
+}
+.logo-icon{font-size:22px;filter:none;-webkit-text-fill-color:initial}
+.net-badge{
+  font-size:11px;font-weight:600;letter-spacing:0.5px;
+  padding:3px 10px;border-radius:20px;
+  background:var(--green-dim);color:var(--green);
+  text-transform:uppercase;
+}
+.header-right{display:flex;align-items:center;gap:12px}
+.live-dot{width:8px;height:8px;border-radius:50%;background:var(--green);animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}
+.live-label{font-size:12px;color:var(--text-secondary);font-weight:500}
+
+/* ─── Nav Tabs ─── */
+.nav{
+  display:flex;gap:2px;padding:0 32px;
+  background:var(--bg-secondary);
+  border-bottom:1px solid var(--border);
+}
+.nav-tab{
+  padding:12px 20px;font-size:13px;font-weight:500;
+  color:var(--text-secondary);cursor:pointer;
+  border-bottom:2px solid transparent;
+  transition:all 0.2s;
+}
+.nav-tab:hover{color:var(--text-primary)}
+.nav-tab.active{color:var(--accent);border-bottom-color:var(--accent)}
+
+/* ─── Container ─── */
+.container{max-width:1200px;margin:0 auto;padding:24px 32px}
+@media(max-width:768px){.container{padding:16px}.header{padding:0 16px}.nav{padding:0 16px}}
+
+/* ─── Search ─── */
+.search-wrap{position:relative;margin-bottom:28px}
+.search-wrap input{
+  width:100%;
+  background:var(--bg-card);border:1px solid var(--border);
+  border-radius:12px;padding:14px 18px 14px 44px;
+  color:var(--text-primary);font-size:14px;font-family:'Outfit',sans-serif;
+  transition:border-color 0.2s,box-shadow 0.2s;
+}
+.search-wrap input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-glow)}
+.search-wrap input::placeholder{color:var(--text-muted)}
+.search-icon{position:absolute;left:16px;top:50%;transform:translateY(-50%);color:var(--text-muted);font-size:16px}
+
+/* ─── Stats Grid ─── */
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:28px}
+@media(max-width:900px){.stats{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:500px){.stats{grid-template-columns:1fr}}
+.stat{
+  background:var(--bg-card);border:1px solid var(--border);
+  border-radius:12px;padding:18px 20px;
+  transition:border-color 0.2s,transform 0.15s;
+}
+.stat:hover{border-color:var(--border-focus);transform:translateY(-1px)}
+.stat-label{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.8px;color:var(--text-muted);margin-bottom:8px}
+.stat-value{font-size:26px;font-weight:700;letter-spacing:-0.5px;line-height:1}
+.stat-sub{font-size:12px;color:var(--text-secondary);margin-top:6px}
+.stat-value.blue{color:var(--accent)}
+.stat-value.green{color:var(--green)}
+.stat-value.cyan{color:var(--cyan)}
+.stat-value.amber{color:var(--amber)}
+
+/* ─── Cards ─── */
+.card{
+  background:var(--bg-card);border:1px solid var(--border);
+  border-radius:12px;margin-bottom:16px;overflow:hidden;
+}
+.card-head{
+  padding:16px 20px;
+  border-bottom:1px solid var(--border);
+  display:flex;justify-content:space-between;align-items:center;
+}
+.card-head h2{font-size:15px;font-weight:600;color:var(--text-primary)}
+.card-head .count{font-size:12px;color:var(--text-secondary);font-weight:500}
+.card-body{padding:0}
+
+/* ─── Table ─── */
 table{width:100%;border-collapse:collapse}
-th{text-align:left;color:#8b949e;font-size:12px;text-transform:uppercase;padding:8px 12px;border-bottom:1px solid #30363d}
-td{padding:10px 12px;border-bottom:1px solid #21262d;font-size:13px}
-tr:hover td{background:#1c2129}
-.hash{color:#58a6ff;font-family:monospace;font-size:12px;cursor:pointer}
-.hash:hover{text-decoration:underline}
-.search{display:flex;gap:8px;margin-bottom:24px}
-.search input{flex:1;background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:10px 14px;color:#c9d1d9;font-size:14px;font-family:monospace}
-.search input:focus{outline:none;border-color:#58a6ff}
-.search button{background:#238636;color:#fff;border:none;border-radius:6px;padding:10px 20px;cursor:pointer;font-weight:600}
-.search button:hover{background:#2ea043}
-.badge{display:inline-block;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600}
-.badge-green{background:#0d2818;color:#3fb950}
-.badge-blue{background:#0c2d6b;color:#58a6ff}
-#loading{text-align:center;color:#8b949e;padding:40px}
-.block-detail{display:none}
-.block-detail.active{display:block}
-#error{color:#f85149;padding:12px;display:none}
+thead th{
+  text-align:left;font-size:11px;font-weight:600;
+  text-transform:uppercase;letter-spacing:0.6px;
+  color:var(--text-muted);padding:12px 20px;
+  border-bottom:1px solid var(--border);
+  background:var(--bg-secondary);
+  position:sticky;top:0;
+}
+tbody td{
+  padding:14px 20px;border-bottom:1px solid var(--border);
+  font-size:13px;color:var(--text-secondary);
+  transition:background 0.15s;
+}
+tbody tr{cursor:pointer;transition:background 0.15s}
+tbody tr:hover td{background:var(--bg-card-hover)}
+tbody tr:last-child td{border-bottom:none}
+td.mono-cell{font-family:'JetBrains Mono',monospace;font-size:12px}
+
+/* ─── Hash / Address ─── */
+.hash-link{
+  color:var(--accent);font-family:'JetBrains Mono',monospace;
+  font-size:12px;cursor:pointer;
+  transition:color 0.15s;text-decoration:none;
+}
+.hash-link:hover{color:#60a5fa;text-decoration:underline}
+.full-hash{
+  font-family:'JetBrains Mono',monospace;font-size:12px;
+  color:var(--text-secondary);word-break:break-all;
+  background:var(--bg-secondary);padding:8px 12px;border-radius:8px;
+  display:inline-block;
+}
+
+/* ─── Badges ─── */
+.badge{
+  display:inline-flex;align-items:center;gap:4px;
+  padding:4px 10px;border-radius:6px;
+  font-size:11px;font-weight:600;
+}
+.badge-green{background:var(--green-dim);color:var(--green)}
+.badge-blue{background:var(--accent-glow);color:var(--accent)}
+.badge-amber{background:var(--amber-dim);color:var(--amber)}
+.badge-cyan{background:var(--cyan-dim);color:var(--cyan)}
+
+/* ─── Detail View (Block/Address) ─── */
+.detail-grid{display:grid;grid-template-columns:160px 1fr;gap:0}
+.detail-grid .dl{display:contents}
+.detail-grid .dt{
+  padding:12px 20px;font-size:12px;font-weight:600;
+  color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;
+  border-bottom:1px solid var(--border);
+  display:flex;align-items:center;
+}
+.detail-grid .dd{
+  padding:12px 20px;font-size:13px;
+  color:var(--text-secondary);
+  border-bottom:1px solid var(--border);
+  display:flex;align-items:center;word-break:break-all;
+}
+@media(max-width:600px){
+  .detail-grid{grid-template-columns:1fr}
+  .detail-grid .dt{padding-bottom:2px;border-bottom:none}
+  .detail-grid .dd{padding-top:2px}
+}
+
+/* ─── Back Button ─── */
+.back-btn{
+  display:inline-flex;align-items:center;gap:6px;
+  padding:8px 16px;border-radius:8px;
+  background:var(--bg-card);border:1px solid var(--border);
+  color:var(--text-secondary);font-size:13px;font-weight:500;
+  cursor:pointer;transition:all 0.2s;margin-bottom:20px;
+}
+.back-btn:hover{border-color:var(--accent);color:var(--text-primary)}
+
+/* ─── Peer Cards ─── */
+.peer-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;padding:16px 20px}
+.peer-card{
+  background:var(--bg-secondary);border:1px solid var(--border);
+  border-radius:10px;padding:14px 16px;
+}
+.peer-card .peer-addr{font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--accent);margin-bottom:8px}
+.peer-card .peer-meta{display:flex;gap:16px;font-size:12px;color:var(--text-muted)}
+.peer-card .peer-meta span{display:flex;align-items:center;gap:4px}
+
+/* ─── Loading / Error ─── */
+#loading{text-align:center;color:var(--text-muted);padding:60px 20px;font-size:14px}
+#loading .spinner{
+  width:32px;height:32px;border:3px solid var(--border);
+  border-top-color:var(--accent);border-radius:50%;
+  animation:spin 0.8s linear infinite;
+  margin:0 auto 16px;
+}
+@keyframes spin{to{transform:rotate(360deg)}}
+.error-banner{
+  background:var(--red-dim);border:1px solid rgba(239,68,68,0.3);
+  border-radius:10px;padding:12px 18px;margin-bottom:16px;
+  color:var(--red);font-size:13px;display:none;
+}
+
+/* ─── Address balance header ─── */
+.addr-header{
+  display:flex;align-items:center;justify-content:space-between;
+  flex-wrap:wrap;gap:12px;padding:20px;
+}
+.addr-bal{font-size:28px;font-weight:700;color:var(--green)}
+.addr-bal .unit{font-size:14px;color:var(--text-muted);font-weight:500}
+
+/* ─── Animations ─── */
+.fade-in{animation:fadeIn 0.3s ease}
+@keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
 </style>
 </head>
 <body>
+
 <div class="header">
-  <h1>⛏️ EquiForge <span>Block Explorer</span></h1>
-</div>
-<div class="container">
-  <div class="search">
-    <input id="searchInput" placeholder="Search by block height, hash, or address..." onkeydown="if(event.key==='Enter')search()">
-    <button onclick="search()">Search</button>
+  <div class="header-left">
+    <div><span class="logo-icon">⛏️</span> <span class="logo">EquiForge</span></div>
+    <div class="net-badge" id="netBadge">Mainnet</div>
   </div>
-  <div id="error"></div>
-  <div id="stats" class="stats"></div>
-  <div id="content"></div>
-  <div id="loading">Loading...</div>
+  <div class="header-right">
+    <div class="live-dot"></div>
+    <div class="live-label" id="liveLabel">Syncing...</div>
+  </div>
 </div>
+
+<div class="nav">
+  <div class="nav-tab active" data-tab="dashboard" onclick="switchTab('dashboard')">Overview</div>
+  <div class="nav-tab" data-tab="blocks" onclick="switchTab('blocks')">Blocks</div>
+  <div class="nav-tab" data-tab="peers" onclick="switchTab('peers')">Network</div>
+</div>
+
+<div class="container">
+  <div class="error-banner" id="error"></div>
+
+  <div class="search-wrap">
+    <span class="search-icon">🔍</span>
+    <input id="searchInput" placeholder="Search by block height, block hash, or wallet address..." 
+           onkeydown="if(event.key==='Enter')search()" autocomplete="off" spellcheck="false">
+  </div>
+
+  <div id="content">
+    <div id="loading"><div class="spinner"></div>Connecting to node...</div>
+  </div>
+</div>
+
 <script>
 const RPC = window.location.origin;
+let currentTab = 'dashboard';
+let chainInfo = null;
+
 async function rpc(method, params=[]) {
   const r = await fetch(RPC, {method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({method, params, id:1})});
+    body: JSON.stringify({method, params, id:Date.now()})});
   const d = await r.json();
   if(d.error) throw new Error(d.error.message);
   return d.result;
 }
-function short(h){return h?h.slice(0,12)+'…'+h.slice(-6):''}
-function fmt(v){return v !== undefined && v !== null ? v : '—'}
-function fmtEqf(base){
-  if(!base && base !== 0) return '—';
-  return (base/1e8).toFixed(base%1e8===0?0:8).replace(/\.?0+$/,'');
+
+function short(h){ return h ? h.slice(0,10)+'···'+h.slice(-6) : '—' }
+function fmt(v){ return v !== undefined && v !== null ? Number(v).toLocaleString() : '—' }
+function fmtEqf(v){ return v !== undefined && v !== null ? parseFloat(v).toFixed(v%1===0?0:4) : '—' }
+function timeAgo(ts){
+  const s = Math.floor(Date.now()/1000 - ts);
+  if(s<60) return s+'s ago';
+  if(s<3600) return Math.floor(s/60)+'m ago';
+  if(s<86400) return Math.floor(s/3600)+'h ago';
+  return Math.floor(s/86400)+'d ago';
+}
+function fmtTime(ts){ return new Date(ts*1000).toLocaleString() }
+function fmtSize(b){
+  if(b<1024) return b+' B';
+  return (b/1024).toFixed(1)+' KB';
 }
 
-async function loadDashboard() {
+function switchTab(tab){
+  currentTab = tab;
+  document.querySelectorAll('.nav-tab').forEach(t => 
+    t.classList.toggle('active', t.dataset.tab === tab));
+  refresh();
+}
+
+async function refresh(){
   try {
-    const info = await rpc('getinfo');
-    document.getElementById('stats').innerHTML = `
-      <div class="stat"><div class="label">Height</div><div class="value blue">${fmt(info.height)}</div></div>
-      <div class="stat"><div class="label">Difficulty</div><div class="value">${info.fractional_difficulty?.toFixed(1) ?? '—'}</div></div>
-      <div class="stat"><div class="label">UTXOs</div><div class="value">${fmt(info.utxos)}</div></div>
-      <div class="stat"><div class="label">Peers</div><div class="value green">${fmt(info.peers)}</div></div>
-      <div class="stat"><div class="label">Mempool</div><div class="value">${fmt(info.mempool)}</div></div>
-      <div class="stat"><div class="label">Banned</div><div class="value">${fmt(info.banned)}</div></div>
-      <div class="stat"><div class="label">Block Reward</div><div class="value">${fmt(info.block_reward)} EQF</div></div>
-    `;
-    // Load recent blocks
-    const height = info.height;
-    let html = '<div class="card"><div class="card-header"><h2>Recent Blocks</h2></div><div class="card-body"><table><tr><th>Height</th><th>Hash</th><th>Txs</th><th>Difficulty</th><th>Time</th></tr>';
-    const start = Math.max(0, height - 14);
-    for(let h = height; h >= start; h--) {
-      try {
-        const b = await rpc('getblock', [String(h)]);
-        const t = new Date(b.timestamp * 1000).toLocaleTimeString();
-        html += `<tr onclick="loadBlock('${b.hash}')" style="cursor:pointer">
-          <td><strong>${b.height}</strong></td>
-          <td><span class="hash">${short(b.hash)}</span></td>
-          <td>${b.tx_count}</td><td>${b.difficulty} bits</td><td>${t}</td></tr>`;
-      } catch(e) {}
-    }
-    html += '</table></div></div>';
-    document.getElementById('content').innerHTML = html;
+    chainInfo = await rpc('getinfo');
+    document.getElementById('liveLabel').textContent = 
+      `Block #${chainInfo.height} · ${chainInfo.peers} peers`;
+
+    if(currentTab === 'dashboard') await renderDashboard();
+    else if(currentTab === 'blocks') await renderBlocks();
+    else if(currentTab === 'peers') await renderPeers();
+
     document.getElementById('loading').style.display = 'none';
   } catch(e) {
-    document.getElementById('loading').innerHTML = '❌ Cannot connect to node RPC. Is the node running?';
+    document.getElementById('loading').innerHTML = 
+      '<div class="spinner"></div>Cannot connect to node. Is it running?';
+    document.getElementById('loading').style.display = 'block';
   }
 }
 
-async function loadBlock(hashOrHeight) {
+async function renderDashboard(){
+  const info = chainInfo;
+  const mining = await rpc('getmininginfo');
+
+  // Calculate estimated hashrate from difficulty
+  const estHashes = mining.estimated_hashes || 0;
+  const hashrate = estHashes > 0 ? (estHashes / 90).toFixed(0) : '—';
+
+  let html = `<div class="stats fade-in">
+    <div class="stat">
+      <div class="stat-label">Block Height</div>
+      <div class="stat-value blue">${fmt(info.height)}</div>
+      <div class="stat-sub">${fmt(info.known_blocks)} total known</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Difficulty</div>
+      <div class="stat-value amber">${info.fractional_difficulty?.toFixed(2) ?? '—'}</div>
+      <div class="stat-sub">${info.difficulty} bits · ~${fmt(estHashes)} hashes</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Network</div>
+      <div class="stat-value green">${fmt(info.peers)}</div>
+      <div class="stat-sub">connected peers</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Block Reward</div>
+      <div class="stat-value cyan">${fmtEqf(info.block_reward)}</div>
+      <div class="stat-sub">EQF per block</div>
+    </div>
+  </div>`;
+
+  // Recent blocks
+  html += `<div class="card fade-in">
+    <div class="card-head"><h2>Recent Blocks</h2><span class="count">Latest 15</span></div>
+    <div class="card-body"><table><thead><tr>
+      <th>Height</th><th>Hash</th><th>Txs</th><th>Size</th><th>Difficulty</th><th>Time</th>
+    </tr></thead><tbody id="blockRows">`;
+
+  const height = info.height;
+  const start = Math.max(0, height - 14);
+  const blockPromises = [];
+  for(let h = height; h >= start; h--) blockPromises.push(rpc('getblock',[String(h)]).catch(()=>null));
+  const blocks = await Promise.all(blockPromises);
+
+  for(const b of blocks) {
+    if(!b) continue;
+    html += `<tr onclick="loadBlock('${b.hash}')">
+      <td><strong style="color:var(--text-primary)">${b.height}</strong></td>
+      <td><span class="hash-link">${short(b.hash)}</span></td>
+      <td>${b.tx_count}</td>
+      <td class="mono-cell">${fmtSize(b.size)}</td>
+      <td><span class="badge badge-amber">${b.difficulty} bits</span></td>
+      <td style="color:var(--text-muted)">${timeAgo(b.timestamp)}</td>
+    </tr>`;
+  }
+  html += '</tbody></table></div></div>';
+
+  // Mempool
+  try {
+    const mp = await rpc('getmempool');
+    if(mp.size > 0) {
+      html += `<div class="card fade-in">
+        <div class="card-head"><h2>Mempool</h2><span class="count">${mp.size} pending</span></div>
+        <div class="card-body"><table><thead><tr><th>TXID</th><th>Size</th><th>Fee</th><th>Fee Rate</th></tr></thead><tbody>`;
+      for(const tx of mp.transactions.slice(0,10)) {
+        html += `<tr><td><span class="hash-link">${short(tx.txid)}</span></td>
+          <td class="mono-cell">${tx.size} B</td>
+          <td>${fmtEqf(tx.fee)} EQF</td>
+          <td class="mono-cell">${tx.fee_rate?.toFixed(2) ?? '—'} sat/B</td></tr>`;
+      }
+      html += '</tbody></table></div></div>';
+    }
+  } catch(e){}
+
+  document.getElementById('content').innerHTML = html;
+}
+
+async function renderBlocks(){
+  const height = chainInfo.height;
+  const count = 30;
+  const start = Math.max(0, height - count + 1);
+
+  let html = `<div class="card fade-in">
+    <div class="card-head"><h2>All Blocks</h2><span class="count">${fmt(height+1)} total</span></div>
+    <div class="card-body"><table><thead><tr>
+      <th>Height</th><th>Hash</th><th>Txs</th><th>Size</th><th>Difficulty</th><th>Nonce</th><th>Time</th>
+    </tr></thead><tbody>`;
+
+  const promises = [];
+  for(let h = height; h >= start; h--) promises.push(rpc('getblock',[String(h)]).catch(()=>null));
+  const blocks = await Promise.all(promises);
+
+  for(const b of blocks) {
+    if(!b) continue;
+    html += `<tr onclick="loadBlock('${b.hash}')">
+      <td><strong style="color:var(--text-primary)">${b.height}</strong></td>
+      <td><span class="hash-link">${short(b.hash)}</span></td>
+      <td>${b.tx_count}</td>
+      <td class="mono-cell">${fmtSize(b.size)}</td>
+      <td><span class="badge badge-amber">${b.difficulty} bits</span></td>
+      <td class="mono-cell" style="color:var(--text-muted)">${fmt(b.nonce)}</td>
+      <td style="color:var(--text-muted)">${timeAgo(b.timestamp)}</td>
+    </tr>`;
+  }
+  html += '</tbody></table></div></div>';
+  document.getElementById('content').innerHTML = html;
+}
+
+async function renderPeers(){
+  const peers = await rpc('getpeerinfo');
+  let html = `<div class="stats fade-in">
+    <div class="stat">
+      <div class="stat-label">Connected Peers</div>
+      <div class="stat-value green">${peers.length}</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Protocol Versions</div>
+      <div class="stat-value">${[...new Set(peers.map(p=>p.version))].join(', ')}</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Max Peer Height</div>
+      <div class="stat-value blue">${fmt(Math.max(...peers.map(p=>p.best_height),0))}</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">UTXOs</div>
+      <div class="stat-value cyan">${fmt(chainInfo.utxos)}</div>
+    </div>
+  </div>`;
+
+  html += `<div class="card fade-in">
+    <div class="card-head"><h2>Connected Peers</h2><span class="count">${peers.length} active</span></div>
+    <div class="card-body">`;
+
+  if(peers.length > 0) {
+    html += '<div class="peer-grid">';
+    for(const p of peers.sort((a,b)=>b.best_height-a.best_height)) {
+      const seen = p.last_seen ? timeAgo(p.last_seen) : 'unknown';
+      html += `<div class="peer-card">
+        <div class="peer-addr">${p.address}</div>
+        <div class="peer-meta">
+          <span>📦 Height ${fmt(p.best_height)}</span>
+          <span>🔗 v${p.version}</span>
+          <span>🕐 ${seen}</span>
+        </div>
+      </div>`;
+    }
+    html += '</div>';
+  } else {
+    html += '<div style="padding:40px;text-align:center;color:var(--text-muted)">No peers connected</div>';
+  }
+  html += '</div></div>';
+  document.getElementById('content').innerHTML = html;
+}
+
+async function loadBlock(hashOrHeight){
   try {
     const b = await rpc('getblock', [hashOrHeight]);
-    const time = new Date(b.timestamp * 1000).toLocaleString();
-    let html = `<div class="card"><div class="card-header"><h2>Block #${b.height}</h2>
-      <span class="badge badge-blue">${b.difficulty} bits</span></div><div class="card-body">
-      <table>
-      <tr><td><strong>Hash</strong></td><td class="hash">${b.hash}</td></tr>
-      <tr><td><strong>Previous</strong></td><td><span class="hash" onclick="loadBlock('${b.prev_hash}')">${b.prev_hash}</span></td></tr>
-      <tr><td><strong>Merkle Root</strong></td><td style="font-family:monospace;font-size:12px">${b.merkle_root}</td></tr>
-      <tr><td><strong>Timestamp</strong></td><td>${time} (${b.timestamp})</td></tr>
-      <tr><td><strong>Nonce</strong></td><td>${b.nonce}</td></tr>
-      <tr><td><strong>Transactions</strong></td><td>${b.tx_count}</td></tr>
-      <tr><td><strong>Size</strong></td><td>${b.size} bytes</td></tr>
-      </table></div></div>`;
-    html += '<div class="card"><div class="card-header"><h2>Transactions</h2></div><div class="card-body"><table><tr><th>TXID</th></tr>';
-    for(const txid of b.txids) {
-      html += `<tr><td class="hash">${txid}</td></tr>`;
-    }
-    html += '</table></div></div>';
-    html += `<button onclick="loadDashboard()" style="background:#30363d;color:#c9d1d9;border:none;border-radius:6px;padding:8px 16px;cursor:pointer;margin-top:8px">← Back</button>`;
+    let html = `<button class="back-btn fade-in" onclick="refresh()">← Back</button>`;
+
+    html += `<div class="card fade-in">
+      <div class="card-head">
+        <h2>Block #${b.height}</h2>
+        <div style="display:flex;gap:8px">
+          <span class="badge badge-amber">${b.difficulty} bits</span>
+          <span class="badge badge-cyan">${b.tx_count} tx</span>
+        </div>
+      </div>
+      <div class="card-body">
+        <div class="detail-grid">
+          <div class="dl"><div class="dt">Hash</div><div class="dd"><span class="full-hash">${b.hash}</span></div></div>
+          <div class="dl"><div class="dt">Previous</div><div class="dd">${b.height>0?`<span class="hash-link" onclick="loadBlock('${b.prev_hash}')">${b.prev_hash}</span>`:'Genesis Block'}</div></div>
+          <div class="dl"><div class="dt">Merkle Root</div><div class="dd"><span style="font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--text-muted);word-break:break-all">${b.merkle_root}</span></div></div>
+          <div class="dl"><div class="dt">Timestamp</div><div class="dd">${fmtTime(b.timestamp)} <span style="color:var(--text-muted);margin-left:8px">(${timeAgo(b.timestamp)})</span></div></div>
+          <div class="dl"><div class="dt">Nonce</div><div class="dd mono-cell">${fmt(b.nonce)}</div></div>
+          <div class="dl"><div class="dt">Size</div><div class="dd">${fmtSize(b.size)}</div></div>
+          <div class="dl"><div class="dt">Version</div><div class="dd">${b.version}</div></div>
+        </div>
+      </div>
+    </div>`;
+
+    html += `<div class="card fade-in">
+      <div class="card-head"><h2>Transactions</h2><span class="count">${b.tx_count} in block</span></div>
+      <div class="card-body"><table><thead><tr><th>#</th><th>Transaction ID</th></tr></thead><tbody>`;
+    b.txids.forEach((txid,i) => {
+      html += `<tr><td style="color:var(--text-muted);width:40px">${i}</td>
+        <td><span class="hash-link" style="font-size:12px">${txid}</span>
+        ${i===0?'<span class="badge badge-blue" style="margin-left:8px">coinbase</span>':''}
+        </td></tr>`;
+    });
+    html += '</tbody></table></div></div>';
+
+    // Navigation
+    html += '<div style="display:flex;gap:8px;margin-top:8px" class="fade-in">';
+    if(b.height > 0) html += `<button class="back-btn" onclick="loadBlock('${b.height-1}')" style="margin:0">← Block #${b.height-1}</button>`;
+    html += `<button class="back-btn" onclick="loadBlock('${b.height+1}')" style="margin:0">Block #${b.height+1} →</button>`;
+    html += '</div>';
+
     document.getElementById('content').innerHTML = html;
     document.getElementById('error').style.display = 'none';
-  } catch(e) {
-    showError(e.message);
-  }
+    window.scrollTo({top:0,behavior:'smooth'});
+  } catch(e) { showError(e.message); }
 }
 
-async function loadAddress(addr) {
+async function loadAddress(addr){
   try {
-    const bal = await rpc('getbalance', [addr]);
-    const utxos = await rpc('listunspent', [addr]);
-    let html = `<div class="card"><div class="card-header"><h2>Address</h2><span class="badge badge-green">${bal.balance} EQF</span></div><div class="card-body">
-      <table><tr><td><strong>Address</strong></td><td class="hash">${addr}</td></tr>
-      <tr><td><strong>Balance</strong></td><td>${bal.balance} EQF (${bal.balance_base} base units)</td></tr>
-      <tr><td><strong>UTXOs</strong></td><td>${utxos.length}</td></tr></table></div></div>`;
+    const [bal, utxos] = await Promise.all([
+      rpc('getbalance', [addr]),
+      rpc('listunspent', [addr])
+    ]);
+    let html = `<button class="back-btn fade-in" onclick="refresh()">← Back</button>`;
+
+    html += `<div class="card fade-in">
+      <div class="addr-header">
+        <div>
+          <div style="font-size:12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">Wallet Address</div>
+          <div class="full-hash">${addr}</div>
+        </div>
+        <div class="addr-bal">${fmtEqf(bal.balance)} <span class="unit">EQF</span></div>
+      </div>
+      <div class="card-body">
+        <div class="detail-grid">
+          <div class="dl"><div class="dt">Balance</div><div class="dd">${fmtEqf(bal.balance)} EQF</div></div>
+          <div class="dl"><div class="dt">Raw Balance</div><div class="dd mono-cell">${fmt(bal.balance_base)} base units</div></div>
+          <div class="dl"><div class="dt">UTXOs</div><div class="dd">${utxos.length} unspent outputs</div></div>
+        </div>
+      </div>
+    </div>`;
+
     if(utxos.length > 0) {
-      html += '<div class="card"><div class="card-header"><h2>Unspent Outputs</h2></div><div class="card-body"><table><tr><th>TXID</th><th>Vout</th><th>Amount</th><th>Height</th><th>Type</th></tr>';
-      for(const u of utxos) {
-        html += `<tr><td class="hash">${short(u.txid)}</td><td>${u.vout}</td><td>${u.amount} EQF</td><td>${u.height}</td><td>${u.coinbase?'<span class="badge badge-blue">coinbase</span>':'tx'}</td></tr>`;
+      html += `<div class="card fade-in">
+        <div class="card-head"><h2>Unspent Outputs</h2><span class="count">${utxos.length} UTXOs</span></div>
+        <div class="card-body"><table><thead><tr><th>TXID</th><th>Output</th><th>Amount</th><th>Block</th><th>Type</th></tr></thead><tbody>`;
+      for(const u of utxos.sort((a,b)=>b.height-a.height)) {
+        html += `<tr>
+          <td><span class="hash-link">${short(u.txid)}</span></td>
+          <td class="mono-cell">${u.vout}</td>
+          <td><strong style="color:var(--green)">${fmtEqf(u.amount)} EQF</strong></td>
+          <td><span class="hash-link" onclick="loadBlock('${u.height}')">#${u.height}</span></td>
+          <td>${u.coinbase?'<span class="badge badge-cyan">⛏ mined</span>':'<span class="badge badge-blue">transfer</span>'}</td>
+        </tr>`;
       }
-      html += '</table></div></div>';
+      html += '</tbody></table></div></div>';
     }
-    html += `<button onclick="loadDashboard()" style="background:#30363d;color:#c9d1d9;border:none;border-radius:6px;padding:8px 16px;cursor:pointer;margin-top:8px">← Back</button>`;
+
     document.getElementById('content').innerHTML = html;
     document.getElementById('error').style.display = 'none';
-  } catch(e) {
-    showError(e.message);
-  }
+    window.scrollTo({top:0,behavior:'smooth'});
+  } catch(e) { showError(e.message); }
 }
 
-function search() {
+function search(){
   const q = document.getElementById('searchInput').value.trim();
   if(!q) return;
-  if(/^\d+$/.test(q)) { loadBlock(q); }
-  else if(q.length === 64 && /^[0-9a-f]+$/i.test(q)) { loadBlock(q); }
-  else { loadAddress(q); }
+  if(/^\d+$/.test(q)) loadBlock(q);
+  else if(q.length===64 && /^[0-9a-f]+$/i.test(q)) loadBlock(q);
+  else loadAddress(q);
 }
 
-function showError(msg) {
+function showError(msg){
   const el = document.getElementById('error');
-  el.textContent = '❌ ' + msg;
+  el.textContent = '⚠ ' + msg;
   el.style.display = 'block';
   setTimeout(() => el.style.display = 'none', 5000);
 }
 
-loadDashboard();
-setInterval(loadDashboard, 15000);
+// Init
+refresh();
+setInterval(()=>{ if(currentTab==='dashboard') refresh() }, 15000);
 </script>
 </body>
 </html>"##.to_string()
