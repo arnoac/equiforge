@@ -1,0 +1,9 @@
+@"
+/target/
+equiforge_data/
+equiforge_testnet/
+equiforge_testnet2/
+equiforge_testnet3/
+*.exe
+equiforge-linux
+"@ | Out-File -Encoding utf8 .gitignore
