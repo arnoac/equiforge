@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>EquiForge Explorer</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg0:#04060b;--bg1:#0a0e17;--bg2:#0f1520;--bg3:#151c2a;--bg4:#1a2235;
+  --border:#1e2940;--border-hi:#2a3a5c;
+  --t1:#e4e9f2;--t2:#8896b0;--t3:#556480;--t4:#3a4a64;
+  --blue:#3b82f6;--blue-g:rgba(59,130,246,.12);
+  --green:#10b981;--green-g:rgba(16,185,129,.12);
+  --amber:#f59e0b;--amber-g:rgba(245,158,11,.12);
+  --red:#ef4444;--red-g:rgba(239,68,68,.12);
+  --cyan:#06b6d4;--cyan-g:rgba(6,182,212,.1);
+  --purple:#8b5cf6;--purple-g:rgba(139,92,246,.1);
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Outfit',sans-serif;background:var(--bg0);color:var(--t1);min-height:100vh;overflow-x:hidden}
+.m{font-family:'JetBrains Mono',monospace}
+a{color:var(--blue);text-decoration:none;cursor:pointer}
+a:hover{color:#60a5fa;text-decoration:underline}
+
+.hdr{background:var(--bg1);border-bottom:1px solid var(--border);padding:0 28px;height:56px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:100;backdrop-filter:blur(12px)}
+.hdr-l{display:flex;align-items:center;gap:14px}
+.logo{font-size:18px;font-weight:700;background:linear-gradient(135deg,#3b82f6,#06b6d4);-webkit-background-clip:text;-webkit-text-fill-color:transparent;cursor:pointer}
+.net-b{font-size:10px;font-weight:700;letter-spacing:.8px;padding:3px 10px;border-radius:20px;text-transform:uppercase}
+.net-main{background:var(--green-g);color:var(--green)}.net-test{background:var(--amber-g);color:var(--amber)}
+.hdr-r{display:flex;align-items:center;gap:10px;font-size:12px;color:var(--t2)}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--green);animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+
+.nav{display:flex;gap:1px;padding:0 28px;background:var(--bg1);border-bottom:1px solid var(--border)}
+.nav-t{padding:10px 18px;font-size:12px;font-weight:600;color:var(--t3);cursor:pointer;border-bottom:2px solid transparent;transition:all .2s;text-transform:uppercase;letter-spacing:.5px}
+.nav-t:hover{color:var(--t1)}.nav-t.on{color:var(--blue);border-bottom-color:var(--blue)}
+
+.wrap{max-width:1240px;margin:0 auto;padding:20px 28px}
+@media(max-width:768px){.wrap{padding:14px}.hdr{padding:0 14px}.nav{padding:0 14px;overflow-x:auto}}
+
+.srch{position:relative;margin-bottom:22px}
+.srch input{width:100%;background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:12px 16px 12px 40px;color:var(--t1);font-size:13px;font-family:'Outfit',sans-serif;transition:border .2s,box-shadow .2s}
+.srch input:focus{outline:none;border-color:var(--blue);box-shadow:0 0 0 3px var(--blue-g)}
+.srch input::placeholder{color:var(--t4)}
+.srch-i{position:absolute;left:14px;top:50%;transform:translateY(-50%);color:var(--t4);font-size:14px}
+
+.stats{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-bottom:22px}
+@media(max-width:1000px){.stats{grid-template-columns:repeat(3,1fr)}}
+@media(max-width:600px){.stats{grid-template-columns:repeat(2,1fr)}}
+.st{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px 16px;transition:border .2s}
+.st:hover{border-color:var(--border-hi)}
+.st-l{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--t4);margin-bottom:6px}
+.st-v{font-size:22px;font-weight:700;letter-spacing:-.3px;line-height:1}
+.st-s{font-size:11px;color:var(--t3);margin-top:4px}
+.c-blue{color:var(--blue)}.c-green{color:var(--green)}.c-amber{color:var(--amber)}.c-cyan{color:var(--cyan)}.c-purple{color:var(--purple)}.c-red{color:var(--red)}
+
+.blk-prog{height:3px;background:var(--bg3);border-radius:2px;margin-top:6px;overflow:hidden}
+.blk-prog-fill{height:100%;border-radius:2px;transition:width 1s linear}
+.prog-ok{background:var(--green)}.prog-warn{background:var(--amber)}.prog-late{background:var(--red)}
+
+.card{background:var(--bg2);border:1px solid var(--border);border-radius:10px;margin-bottom:14px;overflow:hidden}
+.card-h{padding:14px 18px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center}
+.card-h h2{font-size:14px;font-weight:600}.card-h .cnt{font-size:11px;color:var(--t3);font-weight:500}
+.card-b{padding:0}
+
+table{width:100%;border-collapse:collapse}
+thead th{text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--t4);padding:10px 18px;border-bottom:1px solid var(--border);background:var(--bg1)}
+tbody td{padding:11px 18px;border-bottom:1px solid var(--border);font-size:12px;color:var(--t2);transition:background .15s}
+tbody tr{cursor:pointer;transition:background .15s}
+tbody tr:hover td{background:var(--bg3)}
+tbody tr:last-child td{border-bottom:none}
+
+.hl{color:var(--blue);font-family:'JetBrains Mono',monospace;font-size:11px;cursor:pointer}
+.hl:hover{color:#60a5fa;text-decoration:underline}
+.fh{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--t2);word-break:break-all;background:var(--bg1);padding:6px 10px;border-radius:6px;display:inline-block}
+
+.bg{display:inline-flex;align-items:center;gap:3px;padding:3px 8px;border-radius:5px;font-size:10px;font-weight:700;letter-spacing:.3px}
+.bg-green{background:var(--green-g);color:var(--green)}.bg-blue{background:var(--blue-g);color:var(--blue)}
+.bg-amber{background:var(--amber-g);color:var(--amber)}.bg-cyan{background:var(--cyan-g);color:var(--cyan)}
+.bg-purple{background:var(--purple-g);color:var(--purple)}.bg-red{background:var(--red-g);color:var(--red)}
+
+.dg{display:grid;grid-template-columns:150px 1fr;gap:0}
+.dg .r{display:contents}
+.dg .k{padding:10px 18px;font-size:11px;font-weight:700;color:var(--t4);text-transform:uppercase;letter-spacing:.4px;border-bottom:1px solid var(--border);display:flex;align-items:center}
+.dg .v{padding:10px 18px;font-size:12px;color:var(--t2);border-bottom:1px solid var(--border);display:flex;align-items:center;word-break:break-all;gap:8px}
+@media(max-width:600px){.dg{grid-template-columns:1fr}.dg .k{padding-bottom:1px;border-bottom:none}.dg .v{padding-top:1px}}
+
+.io-grid{display:grid;grid-template-columns:1fr 40px 1fr;gap:0;padding:14px 18px}
+@media(max-width:700px){.io-grid{grid-template-columns:1fr;gap:10px}}
+.io-col{display:flex;flex-direction:column;gap:6px}
+.io-arrow{display:flex;align-items:center;justify-content:center;color:var(--t4);font-size:18px}
+.io-item{background:var(--bg1);border:1px solid var(--border);border-radius:8px;padding:10px 12px;font-size:12px}
+.io-addr{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--blue);word-break:break-all;cursor:pointer}
+.io-addr:hover{color:#60a5fa}
+.io-amt{font-weight:700;margin-top:4px}.io-amt.green{color:var(--green)}.io-amt.red{color:var(--red)}
+
+.back{display:inline-flex;align-items:center;gap:5px;padding:7px 14px;border-radius:7px;background:var(--bg2);border:1px solid var(--border);color:var(--t2);font-size:12px;font-weight:600;cursor:pointer;transition:all .2s;margin-bottom:16px}
+.back:hover{border-color:var(--blue);color:var(--t1)}
+
+.pgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px;padding:14px 18px}
+.pc{background:var(--bg1);border:1px solid var(--border);border-radius:8px;padding:12px 14px}
+.pc-a{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--blue);margin-bottom:6px}
+.pc-m{display:flex;gap:14px;font-size:11px;color:var(--t3);flex-wrap:wrap}
+.pc-m span{display:flex;align-items:center;gap:3px}
+
+.pag{display:flex;align-items:center;justify-content:center;gap:6px;padding:14px}
+.pag-btn{padding:6px 12px;border-radius:6px;background:var(--bg3);border:1px solid var(--border);color:var(--t2);font-size:12px;cursor:pointer}
+.pag-btn:hover{border-color:var(--blue);color:var(--t1)}
+.pag-btn.dis{opacity:.3;pointer-events:none}
+.pag-info{font-size:12px;color:var(--t3)}
+
+.ah{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;padding:16px 18px}
+.ah-bal{font-size:24px;font-weight:700;color:var(--green)}.ah-bal .u{font-size:12px;color:var(--t3);font-weight:500}
+
+#ld{text-align:center;color:var(--t3);padding:50px 20px;font-size:13px}
+#ld .sp{width:28px;height:28px;border:3px solid var(--border);border-top-color:var(--blue);border-radius:50%;animation:spin .7s linear infinite;margin:0 auto 14px}
+@keyframes spin{to{transform:rotate(360deg)}}
+.err{background:var(--red-g);border:1px solid rgba(239,68,68,.25);border-radius:8px;padding:10px 16px;margin-bottom:14px;color:var(--red);font-size:12px;display:none}
+.fi{animation:fi .25s ease}
+@keyframes fi{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+</style>
+</head>
+<body>
+<div class="hdr">
+  <div class="hdr-l">
+    <span class="logo" onclick="goHome()">&#9935; EquiForge</span>
+    <span class="net-b" id="netB">MAINNET</span>
+  </div>
+  <div class="hdr-r"><div class="dot"></div><span id="live">Connecting...</span></div>
+</div>
+<div class="nav">
+  <div class="nav-t on" data-tab="dash" onclick="go('dash')">Overview</div>
+  <div class="nav-t" data-tab="blocks" onclick="go('blocks')">Blocks</div>
+  <div class="nav-t" data-tab="mempool" onclick="go('mempool')">Mempool</div>
+  <div class="nav-t" data-tab="rich" onclick="go('rich')">Rich List</div>
+  <div class="nav-t" data-tab="peers" onclick="go('peers')">Network</div>
+</div>
+<div class="wrap">
+  <div class="err" id="err"></div>
+  <div class="srch"><span class="srch-i">&#128269;</span><input id="si" placeholder="Search by block height, hash, transaction ID, or address..." onkeydown="if(event.key==='Enter')search()" autocomplete="off" spellcheck="false"></div>
+  <div id="ct"><div id="ld"><div class="sp"></div>Connecting to node...</div></div>
+</div>
+<script>
+const R=window.location.origin;
+let tab='dash',info=null,bPage=0;
+
+async function rpc(m,p=[]){const r=await fetch(R,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({method:m,params:p,id:Date.now()})});const d=await r.json();if(d.error)throw new Error(d.error.message);return d.result}
+
+const sh=(h,n=8)=>h?h.slice(0,n)+'\u2026'+h.slice(-5):'\u2014';
+const fm=v=>v!=null?Number(v).toLocaleString():'\u2014';
+const fe=v=>v!=null?parseFloat(v).toFixed(v%1===0?0:4):'\u2014';
+function ta(ts){const s=Math.floor(Date.now()/1000-ts);if(s<0)return'just now';if(s<60)return s+'s ago';if(s<3600)return Math.floor(s/60)+'m ago';if(s<86400)return Math.floor(s/3600)+'h ago';return Math.floor(s/86400)+'d ago'}
+const ft=ts=>new Date(ts*1000).toLocaleString();
+const fs=b=>b<1024?b+' B':(b/1024).toFixed(1)+' KB';
+const fh=v=>{if(v<1e3)return v.toFixed(1)+' H/s';if(v<1e6)return(v/1e3).toFixed(1)+' KH/s';if(v<1e9)return(v/1e6).toFixed(1)+' MH/s';return(v/1e9).toFixed(1)+' GH/s'};
+
+function go(t){tab=t;bPage=0;document.querySelectorAll('.nav-t').forEach(e=>e.classList.toggle('on',e.dataset.tab===t));refresh()}
+function goHome(){go('dash')}
+
+async function refresh(){
+  try{
+    info=await rpc('getinfo');
+    document.getElementById('live').textContent='Block #'+info.height+' \u00b7 '+info.peers+' peers';
+    const nb=document.getElementById('netB');
+    if(info.network==='testnet'){nb.textContent='TESTNET';nb.className='net-b net-test'}else{nb.textContent='MAINNET';nb.className='net-b net-main'}
+    if(tab==='dash')await rDash();
+    else if(tab==='blocks')await rBlocks();
+    else if(tab==='mempool')await rMempool();
+    else if(tab==='rich')await rRich();
+    else if(tab==='peers')await rPeers();
+    document.getElementById('ld').style.display='none';
+  }catch(e){
+    document.getElementById('ld').innerHTML='<div class="sp"></div>Cannot connect to node';
+    document.getElementById('ld').style.display='block';
+  }
+}
+
+async function rDash(){
+  const i=info;
+  const sinceBlock=Math.floor(Date.now()/1000)-i.last_block_time;
+  const pct=Math.min(sinceBlock/90*100,200);
+  const pcl=pct<=100?'prog-ok':pct<=150?'prog-warn':'prog-late';
+  const supply_pct=(i.total_supply/i.max_supply*100).toFixed(2);
+
+  let h='<div class="stats fi">';
+  h+='<div class="st"><div class="st-l">Height</div><div class="st-v c-blue">'+fm(i.height)+'</div><div class="st-s">'+fm(i.known_blocks)+' known</div></div>';
+  h+='<div class="st"><div class="st-l">Difficulty</div><div class="st-v c-amber">'+(i.fractional_difficulty!=null?i.fractional_difficulty.toFixed(2):'\u2014')+'</div><div class="st-s">'+i.difficulty+' bits</div></div>';
+  h+='<div class="st"><div class="st-l">Hashrate</div><div class="st-v c-purple">'+fh(i.hashrate)+'</div><div class="st-s">est. from blocks</div></div>';
+  h+='<div class="st"><div class="st-l">Supply</div><div class="st-v c-green">'+fm(Math.floor(i.total_supply))+'</div><div class="st-s">'+supply_pct+'% of '+fm(i.max_supply)+'</div></div>';
+  h+='<div class="st"><div class="st-l">Block Reward</div><div class="st-v c-cyan">'+fe(i.block_reward)+'</div><div class="st-s">EQF per block</div></div>';
+  h+='<div class="st"><div class="st-l">Last Block</div><div class="st-v" style="font-size:18px" id="blockTimer">'+sinceBlock+'s</div>';
+  h+='<div class="blk-prog"><div class="blk-prog-fill '+pcl+'" style="width:'+Math.min(pct,100)+'%" id="blockProg"></div></div></div>';
+  h+='</div>';
+
+  h+='<div class="card fi"><div class="card-h"><h2>Recent Blocks</h2><span class="cnt">Latest 12</span></div><div class="card-b"><table><thead><tr><th>Height</th><th>Hash</th><th>Miner</th><th>Txs</th><th>Size</th><th>Reward</th><th>Time</th></tr></thead><tbody>';
+  const ps=[];for(let x=i.height;x>=Math.max(0,i.height-11);x--)ps.push(rpc('getblock',[String(x)]).catch(function(){return null}));
+  const bs=await Promise.all(ps);
+  for(var bi=0;bi<bs.length;bi++){var b=bs[bi];if(!b)continue;
+    h+='<tr onclick="vBlock(\''+b.hash+'\')">';
+    h+='<td><strong style="color:var(--t1)">'+b.height+'</strong></td>';
+    h+='<td><span class="hl">'+sh(b.hash)+'</span></td>';
+    h+='<td><span class="hl" onclick="event.stopPropagation();vAddr(\''+b.miner+'\')">'+sh(b.miner,6)+'</span></td>';
+    h+='<td>'+b.tx_count+'</td>';
+    h+='<td class="m" style="font-size:11px">'+fs(b.size)+'</td>';
+    h+='<td><span class="c-green">'+fe(b.reward)+'</span></td>';
+    h+='<td style="color:var(--t3)">'+ta(b.timestamp)+'</td></tr>';
+  }
+  h+='</tbody></table></div></div>';
+
+  try{var mp=await rpc('getmempool');
+    if(mp.size>0){
+      h+='<div class="card fi"><div class="card-h"><h2>Pending Transactions</h2><span class="cnt">'+mp.size+' in mempool</span></div><div class="card-b"><table><thead><tr><th>TXID</th><th>Size</th><th>Fee</th></tr></thead><tbody>';
+      for(var mi=0;mi<Math.min(mp.transactions.length,5);mi++){var tx=mp.transactions[mi];
+        h+='<tr onclick="vTx(\''+tx.txid+'\')"><td><span class="hl">'+sh(tx.txid)+'</span></td><td class="m" style="font-size:11px">'+tx.size+' B</td><td>'+fe(tx.fee)+' EQF</td></tr>';}
+      h+='</tbody></table></div></div>';
+    }
+  }catch(e){}
+  document.getElementById('ct').innerHTML=h;
+}
+
+async function rBlocks(){
+  var perPage=25,total=info.height+1,pages=Math.ceil(total/perPage);
+  var start=info.height-bPage*perPage,end=Math.max(0,start-perPage+1);
+  var h='<div class="card fi"><div class="card-h"><h2>All Blocks</h2><span class="cnt">'+fm(total)+' total</span></div><div class="card-b"><table><thead><tr><th>Height</th><th>Hash</th><th>Miner</th><th>Txs</th><th>Size</th><th>Diff</th><th>Reward</th><th>Time</th></tr></thead><tbody>';
+  var ps=[];for(var x=start;x>=end;x--)ps.push(rpc('getblock',[String(x)]).catch(function(){return null}));
+  var bs=await Promise.all(ps);
+  for(var i=0;i<bs.length;i++){var b=bs[i];if(!b)continue;
+    h+='<tr onclick="vBlock(\''+b.hash+'\')">';
+    h+='<td><strong style="color:var(--t1)">'+b.height+'</strong></td>';
+    h+='<td><span class="hl">'+sh(b.hash)+'</span></td>';
+    h+='<td><span class="hl" onclick="event.stopPropagation();vAddr(\''+b.miner+'\')">'+sh(b.miner,6)+'</span></td>';
+    h+='<td>'+b.tx_count+'</td><td class="m" style="font-size:11px">'+fs(b.size)+'</td>';
+    h+='<td><span class="bg bg-amber">'+b.difficulty+'</span></td>';
+    h+='<td class="c-green">'+fe(b.reward)+'</td>';
+    h+='<td style="color:var(--t3)">'+ta(b.timestamp)+'</td></tr>';
+  }
+  h+='</tbody></table></div></div>';
+  h+='<div class="pag"><button class="pag-btn '+(bPage<=0?'dis':'')+'" onclick="bPage--;rBlocks()">&#8592; Newer</button><span class="pag-info">Page '+(bPage+1)+' of '+pages+'</span><button class="pag-btn '+(end<=0?'dis':'')+'" onclick="bPage++;rBlocks()">Older &#8594;</button></div>';
+  document.getElementById('ct').innerHTML=h;
+}
+
+async function rMempool(){
+  var mp=await rpc('getmempool');
+  var h='<div class="stats fi"><div class="st"><div class="st-l">Pending</div><div class="st-v c-amber">'+mp.size+'</div><div class="st-s">transactions</div></div>';
+  h+='<div class="st"><div class="st-l">Mempool</div><div class="st-v c-cyan">'+(mp.size>0?'Active':'Empty')+'</div></div></div>';
+  h+='<div class="card fi"><div class="card-h"><h2>Mempool Transactions</h2></div><div class="card-b">';
+  if(mp.size===0){h+='<div style="padding:40px;text-align:center;color:var(--t3)">No pending transactions</div>'}
+  else{h+='<table><thead><tr><th>TXID</th><th>Size</th><th>Fee</th><th>Fee Rate</th></tr></thead><tbody>';
+    for(var i=0;i<mp.transactions.length;i++){var tx=mp.transactions[i];
+      h+='<tr onclick="vTx(\''+tx.txid+'\')"><td><span class="hl">'+sh(tx.txid)+'</span></td><td class="m" style="font-size:11px">'+tx.size+' B</td><td>'+fe(tx.fee)+' EQF</td><td class="m" style="font-size:11px">'+(tx.fee_rate!=null?tx.fee_rate.toFixed(2):'\u2014')+' sat/B</td></tr>';}
+    h+='</tbody></table>';}
+  h+='</div></div>';document.getElementById('ct').innerHTML=h;
+}
+
+async function rRich(){
+  var r=await rpc('getrichlist',[50]);
+  var h='<div class="stats fi"><div class="st"><div class="st-l">Addresses</div><div class="st-v c-blue">'+fm(r.total_addresses)+'</div><div class="st-s">with balance</div></div></div>';
+  h+='<div class="card fi"><div class="card-h"><h2>Rich List</h2><span class="cnt">Top '+r.addresses.length+'</span></div><div class="card-b"><table><thead><tr><th>#</th><th>Address</th><th>Balance</th></tr></thead><tbody>';
+  for(var i=0;i<r.addresses.length;i++){var a=r.addresses[i];
+    h+='<tr onclick="vAddr(\''+a.address+'\')"><td style="color:var(--t3)">'+a.rank+'</td><td><span class="hl">'+sh(a.address,10)+'</span></td><td><strong class="c-green">'+fe(a.balance)+' EQF</strong></td></tr>';}
+  h+='</tbody></table></div></div>';document.getElementById('ct').innerHTML=h;
+}
+
+async function rPeers(){
+  var ps=await rpc('getpeerinfo');
+  var inb=0,outb=0;
+  var maxH=0;for(var i=0;i<ps.length;i++){if(ps[i].best_height>maxH)maxH=ps[i].best_height;}
+  var h='<div class="stats fi">';
+  h+='<div class="st"><div class="st-l">Peers</div><div class="st-v c-green">'+ps.length+'</div></div>';
+  h+='<div class="st"><div class="st-l">Max Height</div><div class="st-v c-amber">'+fm(maxH)+'</div></div>';
+  h+='<div class="st"><div class="st-l">UTXOs</div><div class="st-v c-purple">'+fm(info.utxos)+'</div></div>';
+  h+='<div class="st"><div class="st-l">Avg Block</div><div class="st-v">'+(info.avg_block_time!=null?info.avg_block_time.toFixed(1):'\u2014')+'s</div><div class="st-s">target: 90s</div></div>';
+  h+='</div>';
+  h+='<div class="card fi"><div class="card-h"><h2>Connected Peers</h2></div><div class="card-b">';
+  if(ps.length===0){h+='<div style="padding:40px;text-align:center;color:var(--t3)">No peers connected</div>'}
+  else{h+='<div class="pgrid">';
+    ps.sort(function(a,b){return b.best_height-a.best_height});
+    for(var i=0;i<ps.length;i++){var p=ps[i];
+      h+='<div class="pc"><div class="pc-a">'+p.address+'</div><div class="pc-m">';
+      h+='<span>&#128230; '+fm(p.best_height)+'</span><span>&#128279; v'+p.version+'</span>';
+      h+='<span>&#128336; '+(p.last_seen?ta(p.last_seen):'\u2014')+'</span></div></div>';}
+    h+='</div>';}
+  h+='</div></div>';document.getElementById('ct').innerHTML=h;
+}
+
+async function vBlock(id){
+  try{var b=await rpc('getblock',[id]);
+    var h='<button class="back fi" onclick="go(tab)">&#8592; Back</button>';
+    h+='<div class="card fi"><div class="card-h"><h2>Block #'+b.height+'</h2><div style="display:flex;gap:6px">';
+    h+='<span class="bg bg-amber">'+b.difficulty+' bits</span><span class="bg bg-cyan">'+b.tx_count+' tx</span>';
+    h+='<span class="bg bg-green">'+b.confirmations+' conf</span></div></div>';
+    h+='<div class="card-b"><div class="dg">';
+    h+='<div class="r"><div class="k">Hash</div><div class="v"><span class="fh">'+b.hash+'</span></div></div>';
+    h+='<div class="r"><div class="k">Previous</div><div class="v">'+(b.height>0?'<a class="hl" onclick="vBlock(\''+b.prev_hash+'\')">'+b.prev_hash+'</a>':'Genesis')+'</div></div>';
+    h+='<div class="r"><div class="k">Timestamp</div><div class="v">'+ft(b.timestamp)+' <span style="color:var(--t3)">('+ta(b.timestamp)+')</span></div></div>';
+    h+='<div class="r"><div class="k">Miner</div><div class="v"><a class="hl" onclick="vAddr(\''+b.miner+'\')">'+b.miner+'</a></div></div>';
+    h+='<div class="r"><div class="k">Reward</div><div class="v"><span class="c-green">'+fe(b.reward)+' EQF</span> + <span class="c-cyan">'+fe(b.fees)+' EQF fees</span></div></div>';
+    var btLabel=b.block_time<90?'<span class="bg bg-green" style="margin-left:6px">fast</span>':b.block_time>180?'<span class="bg bg-red" style="margin-left:6px">slow</span>':'';
+    h+='<div class="r"><div class="k">Block Time</div><div class="v">'+b.block_time+'s '+btLabel+'</div></div>';
+    h+='<div class="r"><div class="k">Merkle Root</div><div class="v" style="font-family:\'JetBrains Mono\',monospace;font-size:11px;color:var(--t3)">'+b.merkle_root+'</div></div>';
+    h+='<div class="r"><div class="k">Nonce</div><div class="v m" style="font-size:11px">'+fm(b.nonce)+'</div></div>';
+    h+='<div class="r"><div class="k">Size</div><div class="v">'+fs(b.size)+'</div></div>';
+    h+='</div></div></div>';
+
+    h+='<div class="card fi"><div class="card-h"><h2>Transactions</h2><span class="cnt">'+b.tx_count+'</span></div><div class="card-b"><table><thead><tr><th>#</th><th>TXID</th><th>Type</th><th>Outputs</th><th>Amount</th><th>Size</th></tr></thead><tbody>';
+    for(var i=0;i<b.transactions.length;i++){var tx=b.transactions[i];
+      var badge=tx.is_coinbase?'<span class="bg bg-cyan">coinbase</span>':'<span class="bg bg-blue">transfer</span>';
+      var addrs='';for(var j=0;j<tx.recipients.length;j++){var rc=tx.recipients[j];
+        addrs+='<span class="hl" onclick="event.stopPropagation();vAddr(\''+rc.address+'\')">'+sh(rc.address,6)+'</span>';if(j<tx.recipients.length-1)addrs+=', ';}
+      h+='<tr onclick="vTx(\''+tx.txid+'\')"><td style="color:var(--t3)">'+tx.index+'</td><td><span class="hl">'+sh(tx.txid)+'</span></td><td>'+badge+'</td><td style="font-size:11px">'+addrs+'</td><td class="c-green">'+fe(tx.output_total)+' EQF</td><td class="m" style="font-size:11px">'+fs(tx.size)+'</td></tr>';}
+    h+='</tbody></table></div></div>';
+
+    h+='<div style="display:flex;gap:6px;margin-top:6px" class="fi">';
+    if(b.height>0)h+='<button class="back" onclick="vBlock(\''+(b.height-1)+'\')" style="margin:0">&#8592; #'+(b.height-1)+'</button>';
+    h+='<button class="back" onclick="vBlock(\''+(b.height+1)+'\')" style="margin:0">#'+(b.height+1)+' &#8594;</button></div>';
+    document.getElementById('ct').innerHTML=h;window.scrollTo({top:0,behavior:'smooth'});
+  }catch(e){showErr(e.message)}
+}
+
+async function vTx(txid){
+  try{var tx=await rpc('gettx',[txid]);
+    var h='<button class="back fi" onclick="go(tab)">&#8592; Back</button>';
+    var status=tx.confirmations>0?'<span class="bg bg-green">'+tx.confirmations+' confirmations</span>':'<span class="bg bg-amber">Pending</span>';
+    h+='<div class="card fi"><div class="card-h"><h2>Transaction</h2>'+status+'</div><div class="card-b"><div class="dg">';
+    h+='<div class="r"><div class="k">TXID</div><div class="v"><span class="fh">'+tx.txid+'</span></div></div>';
+    h+='<div class="r"><div class="k">Block</div><div class="v">'+(tx.block_height!=null?'<a class="hl" onclick="vBlock(\''+tx.block_height+'\')">Block #'+tx.block_height+'</a>':'Mempool')+'</div></div>';
+    h+='<div class="r"><div class="k">Timestamp</div><div class="v">'+(tx.timestamp?ft(tx.timestamp)+' ('+ta(tx.timestamp)+')':'\u2014')+'</div></div>';
+    h+='<div class="r"><div class="k">Type</div><div class="v">'+(tx.is_coinbase?'<span class="bg bg-cyan">Coinbase (mining reward)</span>':'<span class="bg bg-blue">Transfer</span>')+'</div></div>';
+    h+='<div class="r"><div class="k">Size</div><div class="v">'+fs(tx.size)+'</div></div>';
+    if(tx.fee!=null&&!tx.is_coinbase)h+='<div class="r"><div class="k">Fee</div><div class="v"><span class="c-amber">'+fe(tx.fee)+' EQF</span></div></div>';
+    h+='</div></div></div>';
+
+    h+='<div class="card fi"><div class="card-h"><h2>Inputs &amp; Outputs</h2></div><div class="card-b"><div class="io-grid"><div class="io-col">';
+    if(tx.is_coinbase){h+='<div class="io-item"><div style="color:var(--cyan);font-weight:700;font-size:11px">&#9935; COINBASE</div><div class="io-amt green">'+fe(tx.output_total)+' EQF</div></div>'}
+    else{for(var i=0;i<tx.inputs.length;i++){var inp=tx.inputs[i];
+      h+='<div class="io-item"><div class="io-addr" onclick="vAddr(\''+inp.address+'\')">'+(inp.address||'Unknown')+'</div><div class="io-amt red">-'+fe(inp.amount)+' EQF</div></div>';}}
+    h+='</div><div class="io-arrow">&#8594;</div><div class="io-col">';
+    for(var i=0;i<tx.outputs.length;i++){var out=tx.outputs[i];
+      var sp=out.spent?'<span class="bg bg-red" style="margin-left:4px;font-size:9px">SPENT</span>':'<span class="bg bg-green" style="margin-left:4px;font-size:9px">UNSPENT</span>';
+      h+='<div class="io-item"><div class="io-addr" onclick="vAddr(\''+out.address+'\')">'+out.address+'</div><div class="io-amt green">+'+fe(out.amount)+' EQF '+sp+'</div></div>';}
+    h+='</div></div></div></div>';
+    document.getElementById('ct').innerHTML=h;window.scrollTo({top:0,behavior:'smooth'});
+  }catch(e){showErr(e.message)}
+}
+
+async function vAddr(addr){
+  try{var a=await rpc('getaddress',[addr]);
+    var h='<button class="back fi" onclick="go(tab)">&#8592; Back</button>';
+    h+='<div class="card fi"><div class="ah"><div><div style="font-size:10px;color:var(--t4);text-transform:uppercase;letter-spacing:.8px;font-weight:700;margin-bottom:6px">Address</div><div class="fh">'+a.address+'</div></div>';
+    h+='<div class="ah-bal">'+fe(a.balance)+' <span class="u">EQF</span></div></div>';
+    h+='<div class="card-b"><div class="dg">';
+    h+='<div class="r"><div class="k">Balance</div><div class="v c-green" style="font-weight:700">'+fe(a.balance)+' EQF</div></div>';
+    h+='<div class="r"><div class="k">Received</div><div class="v">'+fe(a.total_received)+' EQF</div></div>';
+    h+='<div class="r"><div class="k">Sent</div><div class="v">'+fe(a.total_sent)+' EQF</div></div>';
+    h+='<div class="r"><div class="k">Transactions</div><div class="v">'+a.tx_count+'</div></div>';
+    h+='<div class="r"><div class="k">UTXOs</div><div class="v">'+a.utxo_count+' unspent outputs</div></div>';
+    h+='</div></div></div>';
+
+    if(a.transactions.length>0){
+      h+='<div class="card fi"><div class="card-h"><h2>Transactions</h2><span class="cnt">'+a.tx_count+' total</span></div><div class="card-b"><table><thead><tr><th>TXID</th><th>Block</th><th>Type</th><th>Amount</th><th>Time</th></tr></thead><tbody>';
+      for(var i=0;i<a.transactions.length;i++){var tx=a.transactions[i];
+        var badge=tx.is_coinbase?'<span class="bg bg-cyan">mined</span>':tx.net>0?'<span class="bg bg-green">in</span>':'<span class="bg bg-red">out</span>';
+        var amtClass=tx.net>=0?'c-green':'c-red';var amtSign=tx.net>=0?'+':'';
+        h+='<tr onclick="vTx(\''+tx.txid+'\')"><td><span class="hl">'+sh(tx.txid)+'</span></td><td><a class="hl" onclick="event.stopPropagation();vBlock(\''+tx.block_height+'\')">'+tx.block_height+'</a></td><td>'+badge+'</td><td class="'+amtClass+'" style="font-weight:600">'+amtSign+fe(tx.net)+' EQF</td><td style="color:var(--t3)">'+ta(tx.timestamp)+'</td></tr>';}
+      h+='</tbody></table></div></div>';}
+
+    if(a.utxos.length>0){
+      h+='<div class="card fi"><div class="card-h"><h2>UTXOs</h2><span class="cnt">'+a.utxo_count+'</span></div><div class="card-b"><table><thead><tr><th>TXID</th><th>Output</th><th>Amount</th><th>Block</th><th>Conf</th><th>Type</th></tr></thead><tbody>';
+      a.utxos.sort(function(a,b){return b.height-a.height});
+      for(var i=0;i<a.utxos.length;i++){var u=a.utxos[i];
+        h+='<tr><td><span class="hl" onclick="vTx(\''+u.txid+'\')">'+sh(u.txid)+'</span></td><td class="m" style="font-size:11px">'+u.vout+'</td><td class="c-green" style="font-weight:600">'+fe(u.amount)+' EQF</td><td><a class="hl" onclick="vBlock(\''+u.height+'\')">'+u.height+'</a></td><td>'+fm(u.confirmations)+'</td><td>'+(u.coinbase?'<span class="bg bg-cyan">mined</span>':'<span class="bg bg-blue">tx</span>')+'</td></tr>';}
+      h+='</tbody></table></div></div>';}
+    document.getElementById('ct').innerHTML=h;window.scrollTo({top:0,behavior:'smooth'});
+  }catch(e){showErr(e.message)}
+}
+
+function search(){
+  var q=document.getElementById('si').value.trim();if(!q)return;
+  if(/^\d+$/.test(q))vBlock(q);
+  else if(q.length===64&&/^[0-9a-f]+$/i.test(q)){rpc('getblock',[q]).then(function(){vBlock(q)}).catch(function(){vTx(q)})}
+  else vAddr(q);
+}
+
+function showErr(m){var e=document.getElementById('err');e.textContent='\u26a0 '+m;e.style.display='block';setTimeout(function(){e.style.display='none'},5000)}
+
+refresh();
+setInterval(function(){if(tab==='dash')refresh()},15000);
+setInterval(function(){
+  if(info&&tab==='dash'){
+    var el=document.getElementById('blockTimer');
+    var pr=document.getElementById('blockProg');
+    if(el&&pr){
+      var s=Math.floor(Date.now()/1000)-info.last_block_time;
+      el.textContent=s+'s';
+      var pct=Math.min(s/90*100,100);
+      pr.style.width=pct+'%';
+      pr.className='blk-prog-fill '+(pct<=100?'prog-ok':pct<=150?'prog-warn':'prog-late');
+    }
+  }
+},1000);
+</script>
+</body>
+</html>

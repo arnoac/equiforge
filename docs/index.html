@@ -1,0 +1,1052 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EquiForge — Fair Mining, Real Utility</title>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=JetBrains+Mono:wght@300;400;500&family=Sora:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+  --bg-void: #050508;
+  --bg-deep: #0a0a10;
+  --bg-card: #0d0d16;
+  --border: #1a1a2e;
+  --cyan: #00f0ff;
+  --cyan-dim: #00f0ff44;
+  --cyan-glow: #00f0ff22;
+  --green: #00ff88;
+  --green-dim: #00ff8844;
+  --amber: #ffaa00;
+  --text: #e0e0ec;
+  --text-dim: #6a6a8a;
+  --text-bright: #ffffff;
+}
+
+html { scroll-behavior: smooth; }
+
+body {
+  font-family: 'Sora', sans-serif;
+  background: var(--bg-void);
+  color: var(--text);
+  overflow-x: hidden;
+  line-height: 1.6;
+}
+
+/* ═══ CANVAS BACKGROUND ═══ */
+#particle-canvas {
+  position: fixed;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+  z-index: 0;
+  pointer-events: none;
+}
+
+/* ═══ NAV ═══ */
+nav {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  z-index: 100;
+  padding: 1.2rem 2rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: rgba(5, 5, 8, 0.85);
+  backdrop-filter: blur(20px);
+  border-bottom: 1px solid var(--border);
+}
+
+.nav-logo {
+  font-family: 'Orbitron', monospace;
+  font-weight: 900;
+  font-size: 1.4rem;
+  color: var(--cyan);
+  text-decoration: none;
+  letter-spacing: 2px;
+  text-shadow: 0 0 20px var(--cyan-dim);
+}
+
+.nav-logo span { color: var(--text-bright); }
+
+.nav-links { display: flex; gap: 2rem; align-items: center; }
+
+.nav-links a {
+  color: var(--text-dim);
+  text-decoration: none;
+  font-size: 0.85rem;
+  font-weight: 500;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  transition: color 0.3s, text-shadow 0.3s;
+}
+
+.nav-links a:hover { color: var(--cyan); text-shadow: 0 0 12px var(--cyan-dim); }
+
+.btn-mine {
+  background: linear-gradient(135deg, var(--cyan), #0088aa);
+  color: var(--bg-void);
+  padding: 0.6rem 1.6rem;
+  border-radius: 6px;
+  font-family: 'Orbitron', monospace;
+  font-weight: 700;
+  font-size: 0.8rem;
+  letter-spacing: 2px;
+  text-decoration: none;
+  transition: all 0.3s;
+  box-shadow: 0 0 20px var(--cyan-dim);
+}
+
+.btn-mine:hover {
+  box-shadow: 0 0 40px var(--cyan-dim), 0 0 80px var(--cyan-glow);
+  transform: translateY(-2px);
+}
+
+/* ═══ HERO ═══ */
+.hero {
+  position: relative;
+  z-index: 1;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+  padding: 8rem 2rem 4rem;
+}
+
+.hero-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 1.2rem;
+  border: 1px solid var(--green-dim);
+  border-radius: 100px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.75rem;
+  color: var(--green);
+  margin-bottom: 2rem;
+  animation: pulse-border 3s ease-in-out infinite;
+}
+
+.hero-badge .dot {
+  width: 8px; height: 8px;
+  background: var(--green);
+  border-radius: 50%;
+  box-shadow: 0 0 8px var(--green);
+  animation: pulse-dot 2s ease-in-out infinite;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+@keyframes pulse-border {
+  0%, 100% { border-color: var(--green-dim); }
+  50% { border-color: var(--green); }
+}
+
+.hero h1 {
+  font-family: 'Orbitron', monospace;
+  font-size: clamp(2.8rem, 7vw, 5.5rem);
+  font-weight: 900;
+  line-height: 1.1;
+  margin-bottom: 1.5rem;
+  background: linear-gradient(135deg, var(--text-bright) 0%, var(--cyan) 50%, var(--text-bright) 100%);
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: shimmer 4s linear infinite;
+}
+
+@keyframes shimmer {
+  0% { background-position: 200% center; }
+  100% { background-position: -200% center; }
+}
+
+.hero-sub {
+  font-size: clamp(1rem, 2.5vw, 1.3rem);
+  color: var(--text-dim);
+  max-width: 640px;
+  margin-bottom: 3rem;
+  font-weight: 300;
+  line-height: 1.8;
+}
+
+.hero-actions { display: flex; gap: 1rem; flex-wrap: wrap; justify-content: center; }
+
+.btn-primary {
+  background: linear-gradient(135deg, var(--cyan), #0088aa);
+  color: var(--bg-void);
+  padding: 1rem 2.5rem;
+  border-radius: 8px;
+  font-family: 'Orbitron', monospace;
+  font-weight: 700;
+  font-size: 0.9rem;
+  letter-spacing: 2px;
+  text-decoration: none;
+  transition: all 0.3s;
+  box-shadow: 0 0 30px var(--cyan-dim);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.btn-primary:hover {
+  box-shadow: 0 0 50px var(--cyan-dim), 0 0 100px var(--cyan-glow);
+  transform: translateY(-3px);
+}
+
+.btn-secondary {
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 1rem 2.5rem;
+  border-radius: 8px;
+  font-family: 'Sora', sans-serif;
+  font-weight: 500;
+  font-size: 0.9rem;
+  text-decoration: none;
+  transition: all 0.3s;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.btn-secondary:hover {
+  border-color: var(--cyan);
+  color: var(--cyan);
+  background: var(--cyan-glow);
+}
+
+.hero-stats {
+  display: flex;
+  gap: 3rem;
+  margin-top: 5rem;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.stat {
+  text-align: center;
+}
+
+.stat-value {
+  font-family: 'Orbitron', monospace;
+  font-size: 1.8rem;
+  font-weight: 700;
+  color: var(--text-bright);
+}
+
+.stat-value .accent { color: var(--cyan); }
+
+.stat-label {
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  margin-top: 0.3rem;
+}
+
+/* ═══ SECTIONS ═══ */
+section {
+  position: relative;
+  z-index: 1;
+  padding: 8rem 2rem;
+}
+
+.section-inner {
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+.section-tag {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.7rem;
+  color: var(--cyan);
+  letter-spacing: 4px;
+  text-transform: uppercase;
+  margin-bottom: 1rem;
+}
+
+.section-title {
+  font-family: 'Orbitron', monospace;
+  font-size: clamp(1.8rem, 4vw, 2.8rem);
+  font-weight: 700;
+  color: var(--text-bright);
+  margin-bottom: 1.5rem;
+  line-height: 1.2;
+}
+
+.section-desc {
+  font-size: 1.05rem;
+  color: var(--text-dim);
+  max-width: 600px;
+  line-height: 1.8;
+  font-weight: 300;
+}
+
+/* ═══ FEATURES ═══ */
+.features-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 1.5rem;
+  margin-top: 4rem;
+}
+
+.feature-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 2.5rem 2rem;
+  transition: all 0.4s;
+  position: relative;
+  overflow: hidden;
+}
+
+.feature-card::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--cyan), transparent);
+  opacity: 0;
+  transition: opacity 0.4s;
+}
+
+.feature-card:hover {
+  border-color: var(--cyan-dim);
+  transform: translateY(-4px);
+  box-shadow: 0 20px 60px rgba(0, 240, 255, 0.05);
+}
+
+.feature-card:hover::before { opacity: 1; }
+
+.feature-icon {
+  width: 48px; height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+  font-size: 1.5rem;
+  margin-bottom: 1.5rem;
+  background: var(--cyan-glow);
+  border: 1px solid var(--cyan-dim);
+}
+
+.feature-card:nth-child(2) .feature-icon { background: rgba(0, 255, 136, 0.08); border-color: var(--green-dim); }
+.feature-card:nth-child(3) .feature-icon { background: rgba(255, 170, 0, 0.08); border-color: rgba(255, 170, 0, 0.3); }
+.feature-card:nth-child(4) .feature-icon { background: rgba(160, 100, 255, 0.08); border-color: rgba(160, 100, 255, 0.3); }
+.feature-card:nth-child(5) .feature-icon { background: rgba(255, 80, 120, 0.08); border-color: rgba(255, 80, 120, 0.3); }
+.feature-card:nth-child(6) .feature-icon { background: rgba(0, 200, 255, 0.08); border-color: rgba(0, 200, 255, 0.3); }
+
+.feature-title {
+  font-family: 'Orbitron', monospace;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text-bright);
+  margin-bottom: 0.8rem;
+  letter-spacing: 0.5px;
+}
+
+.feature-desc {
+  font-size: 0.9rem;
+  color: var(--text-dim);
+  line-height: 1.7;
+}
+
+/* ═══ TOKENOMICS ═══ */
+.tokenomics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1.5rem;
+  margin-top: 4rem;
+}
+
+.token-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 2rem;
+  text-align: center;
+  transition: all 0.3s;
+}
+
+.token-card:hover { border-color: var(--cyan-dim); }
+
+.token-value {
+  font-family: 'Orbitron', monospace;
+  font-size: 1.6rem;
+  font-weight: 700;
+  color: var(--cyan);
+  margin-bottom: 0.5rem;
+}
+
+.token-label {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 2px;
+}
+
+/* ═══ SUPPLY BAR ═══ */
+.supply-visual {
+  margin-top: 3rem;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 2.5rem;
+}
+
+.supply-bar-outer {
+  height: 32px;
+  background: var(--bg-deep);
+  border-radius: 16px;
+  overflow: hidden;
+  position: relative;
+  margin-bottom: 1.5rem;
+}
+
+.supply-bar-fill {
+  height: 100%;
+  border-radius: 16px;
+  background: linear-gradient(90deg, var(--cyan), var(--green));
+  width: 0%;
+  transition: width 2s ease-out;
+  position: relative;
+  box-shadow: 0 0 20px var(--cyan-dim);
+}
+
+.supply-bar-fill::after {
+  content: '';
+  position: absolute;
+  right: 0; top: 0; bottom: 0;
+  width: 60px;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2));
+  animation: bar-shine 2s ease-in-out infinite;
+}
+
+@keyframes bar-shine {
+  0%, 100% { opacity: 0; }
+  50% { opacity: 1; }
+}
+
+.supply-legend {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.supply-legend span {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+}
+
+.supply-legend strong { color: var(--text-bright); }
+
+/* ═══ HOW TO MINE ═══ */
+.steps {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 2rem;
+  margin-top: 4rem;
+}
+
+.step {
+  position: relative;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 2.5rem 2rem;
+}
+
+.step-number {
+  font-family: 'Orbitron', monospace;
+  font-size: 3rem;
+  font-weight: 900;
+  color: var(--cyan-dim);
+  position: absolute;
+  top: 1rem; right: 1.5rem;
+  line-height: 1;
+}
+
+.step-title {
+  font-family: 'Orbitron', monospace;
+  font-size: 0.95rem;
+  color: var(--text-bright);
+  margin-bottom: 1rem;
+  font-weight: 600;
+}
+
+.step code {
+  display: block;
+  background: var(--bg-void);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1rem;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.8rem;
+  color: var(--green);
+  margin-top: 0.8rem;
+  overflow-x: auto;
+  word-break: break-all;
+}
+
+.step-desc {
+  font-size: 0.85rem;
+  color: var(--text-dim);
+  line-height: 1.7;
+}
+
+/* ═══ LIVE STATS ═══ */
+.live-stats {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 3rem;
+  margin-top: 4rem;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 2rem;
+  text-align: center;
+  position: relative;
+  overflow: hidden;
+}
+
+.live-stats::before {
+  content: '';
+  position: absolute;
+  top: -1px; left: 0; right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, var(--cyan), var(--green), var(--amber), var(--cyan));
+  background-size: 300% 100%;
+  animation: gradient-flow 4s linear infinite;
+}
+
+@keyframes gradient-flow {
+  0% { background-position: 0% 0; }
+  100% { background-position: 300% 0; }
+}
+
+.live-stat-value {
+  font-family: 'Orbitron', monospace;
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--text-bright);
+}
+
+.live-stat-label {
+  font-size: 0.7rem;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  margin-top: 0.3rem;
+}
+
+/* ═══ ROADMAP ═══ */
+.roadmap {
+  margin-top: 4rem;
+  position: relative;
+  padding-left: 3rem;
+}
+
+.roadmap::before {
+  content: '';
+  position: absolute;
+  left: 11px; top: 0; bottom: 0;
+  width: 2px;
+  background: linear-gradient(to bottom, var(--cyan), var(--green), var(--amber), var(--text-dim));
+}
+
+.roadmap-item {
+  position: relative;
+  margin-bottom: 3rem;
+  padding-bottom: 1rem;
+}
+
+.roadmap-dot {
+  position: absolute;
+  left: -3rem;
+  top: 4px;
+  width: 24px; height: 24px;
+  border-radius: 50%;
+  border: 2px solid var(--cyan);
+  background: var(--bg-void);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.roadmap-dot.done { background: var(--cyan); }
+.roadmap-dot.done::after { content: '✓'; font-size: 0.7rem; color: var(--bg-void); font-weight: 900; }
+.roadmap-dot.active { border-color: var(--green); box-shadow: 0 0 12px var(--green-dim); animation: pulse-dot 2s ease-in-out infinite; }
+.roadmap-dot.future { border-color: var(--text-dim); }
+
+.roadmap-phase {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.7rem;
+  color: var(--cyan);
+  letter-spacing: 2px;
+  text-transform: uppercase;
+}
+
+.roadmap-title {
+  font-family: 'Orbitron', monospace;
+  font-size: 1.1rem;
+  color: var(--text-bright);
+  margin: 0.3rem 0 0.6rem;
+  font-weight: 600;
+}
+
+.roadmap-desc {
+  font-size: 0.85rem;
+  color: var(--text-dim);
+  line-height: 1.7;
+}
+
+/* ═══ CTA ═══ */
+.cta-section {
+  text-align: center;
+  padding: 8rem 2rem;
+  position: relative;
+}
+
+.cta-section::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 50%; transform: translateX(-50%);
+  width: 600px; height: 600px;
+  background: radial-gradient(circle, var(--cyan-glow) 0%, transparent 70%);
+  pointer-events: none;
+}
+
+.cta-title {
+  font-family: 'Orbitron', monospace;
+  font-size: clamp(2rem, 5vw, 3.5rem);
+  font-weight: 900;
+  color: var(--text-bright);
+  margin-bottom: 1.5rem;
+}
+
+.cta-desc {
+  font-size: 1.1rem;
+  color: var(--text-dim);
+  margin-bottom: 3rem;
+  max-width: 500px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* ═══ FOOTER ═══ */
+footer {
+  position: relative;
+  z-index: 1;
+  border-top: 1px solid var(--border);
+  padding: 3rem 2rem;
+  text-align: center;
+}
+
+.footer-links {
+  display: flex;
+  justify-content: center;
+  gap: 2rem;
+  margin-bottom: 1.5rem;
+  flex-wrap: wrap;
+}
+
+.footer-links a {
+  color: var(--text-dim);
+  text-decoration: none;
+  font-size: 0.85rem;
+  transition: color 0.3s;
+}
+
+.footer-links a:hover { color: var(--cyan); }
+
+.footer-copy {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.7rem;
+  color: var(--text-dim);
+}
+
+/* ═══ SCROLL REVEAL ═══ */
+.reveal {
+  opacity: 0;
+  transform: translateY(40px);
+  transition: opacity 0.8s ease, transform 0.8s ease;
+}
+
+.reveal.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* ═══ RESPONSIVE ═══ */
+@media (max-width: 768px) {
+  nav { padding: 1rem; }
+  .nav-links a:not(.btn-mine) { display: none; }
+  .hero-stats { gap: 1.5rem; }
+  .stat-value { font-size: 1.3rem; }
+  section { padding: 5rem 1.5rem; }
+  .roadmap { padding-left: 2.5rem; }
+  .roadmap-dot { left: -2.5rem; }
+}
+</style>
+</head>
+<body>
+
+<canvas id="particle-canvas"></canvas>
+
+<!-- NAV -->
+<nav>
+  <a href="#" class="nav-logo">EQUI<span>FORGE</span></a>
+  <div class="nav-links">
+    <a href="#features">Features</a>
+    <a href="#tokenomics">Tokenomics</a>
+    <a href="#mine">Mine</a>
+    <a href="#roadmap">Roadmap</a>
+    <a href="wallet.html">Wallet</a>
+    <a href="https://github.com/arnoac/equiforge" class="btn-mine" target="_blank">⛏ START MINING</a>
+  </div>
+</nav>
+
+<!-- HERO -->
+<section class="hero">
+  <div class="hero-badge"><span class="dot"></span> NETWORK LIVE — MINING ACTIVE</div>
+  <h1>MINE THE<br>FUTURE</h1>
+  <p class="hero-sub">A CPU-mineable blockchain with a 42M hard cap, ASIC-resistant proof of work, and a roadmap to become the payment layer for decentralized AI compute.</p>
+  <div class="hero-actions">
+    <a href="https://github.com/arnoac/equiforge/releases" class="btn-primary" target="_blank">⛏ DOWNLOAD MINER</a>
+    <a href="http://129.80.239.237:9334" class="btn-secondary" target="_blank">◎ BLOCK EXPLORER</a>
+  </div>
+  <div class="hero-stats">
+    <div class="stat">
+      <div class="stat-value"><span class="accent">42</span>M</div>
+      <div class="stat-label">Max Supply</div>
+    </div>
+    <div class="stat">
+      <div class="stat-value"><span class="accent">50</span> EQF</div>
+      <div class="stat-label">Block Reward</div>
+    </div>
+    <div class="stat">
+      <div class="stat-value"><span class="accent">90</span>s</div>
+      <div class="stat-label">Block Time</div>
+    </div>
+    <div class="stat">
+      <div class="stat-value"><span class="accent">0</span>%</div>
+      <div class="stat-label">Premine</div>
+    </div>
+  </div>
+</section>
+
+<!-- FEATURES -->
+<section id="features">
+  <div class="section-inner reveal">
+    <div class="section-tag">// Why EquiForge</div>
+    <h2 class="section-title">Built for Fairness.<br>Designed for Utility.</h2>
+    <p class="section-desc">No ASIC farms. No VC insiders. No premine. Just open-source code, CPU mining, and a vision for decentralized compute.</p>
+
+    <div class="features-grid">
+      <div class="feature-card">
+        <div class="feature-icon">🧠</div>
+        <div class="feature-title">ASIC-RESISTANT POW</div>
+        <div class="feature-desc">EquiHash-X requires 4 MB RAM per hash with random memory access patterns. CPUs stay competitive. ASICs can't economically win.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">⚖️</div>
+        <div class="feature-title">FAIR LAUNCH</div>
+        <div class="feature-desc">Zero premine. Zero ICO. Zero insider allocation. Every single EQF is earned through proof of work. No exceptions.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">⚡</div>
+        <div class="feature-title">90-SECOND BLOCKS</div>
+        <div class="feature-desc">Fast confirmations with per-block LWMA difficulty adjustment. The network responds to hashrate changes in minutes, not weeks.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🔮</div>
+        <div class="feature-title">AI COMPUTE LAYER</div>
+        <div class="feature-desc">The roadmap: transform miners into a decentralized AI compute marketplace. Pay with EQF to train models, run inference, process data.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🔒</div>
+        <div class="feature-title">ENCRYPTED WALLETS</div>
+        <div class="feature-desc">AES-256 wallet encryption with HMAC integrity checking. Your private keys stay private, protected by password-derived keys.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🌐</div>
+        <div class="feature-title">FULL P2P NETWORK</div>
+        <div class="feature-desc">Gossip-based peer discovery, automatic chain sync, block propagation, and transaction relay. Just connect and go.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- TOKENOMICS -->
+<section id="tokenomics">
+  <div class="section-inner reveal">
+    <div class="section-tag">// Token Economics</div>
+    <h2 class="section-title">Hard-Capped.<br>Deflationary by Design.</h2>
+    <p class="section-desc">42 million EQF will ever exist. Half is mined in the first 6 years. The reward halves every ~6 years until the last fraction of a coin is mined.</p>
+
+    <div class="tokenomics-grid">
+      <div class="token-card">
+        <div class="token-value">42M</div>
+        <div class="token-label">Max Supply</div>
+      </div>
+      <div class="token-card">
+        <div class="token-value">50 EQF</div>
+        <div class="token-label">Block Reward</div>
+      </div>
+      <div class="token-card">
+        <div class="token-value">~6 YRS</div>
+        <div class="token-label">Halving Cycle</div>
+      </div>
+      <div class="token-card">
+        <div class="token-value">5%</div>
+        <div class="token-label">Community Fund</div>
+      </div>
+    </div>
+
+    <div class="supply-visual">
+      <div style="display:flex;justify-content:space-between;margin-bottom:1rem;">
+        <span style="font-family:'Orbitron',monospace;font-size:0.85rem;color:var(--text-bright);">Supply Distribution</span>
+        <span style="font-family:'JetBrains Mono',monospace;font-size:0.75rem;color:var(--cyan);">42,000,000 EQF</span>
+      </div>
+      <div class="supply-bar-outer">
+        <div class="supply-bar-fill" id="supply-bar"></div>
+      </div>
+      <div class="supply-legend">
+        <span>Years 0-6: <strong>50%</strong> (21M)</span>
+        <span>Years 6-12: <strong>75%</strong> (31.5M)</span>
+        <span>Years 12-18: <strong>87.5%</strong> (36.75M)</span>
+        <span>Years 18+: <strong>→ 100%</strong></span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- HOW TO MINE -->
+<section id="mine">
+  <div class="section-inner reveal">
+    <div class="section-tag">// Start in 60 Seconds</div>
+    <h2 class="section-title">Download. Run.<br>You're Mining.</h2>
+    <p class="section-desc">No pool required. No account needed. No GPU necessary. One command and your CPU is earning EQF.</p>
+
+    <div class="steps">
+      <div class="step">
+        <div class="step-number">01</div>
+        <div class="step-title">DOWNLOAD</div>
+        <div class="step-desc">Grab the binary for your platform from GitHub Releases.</div>
+        <code>equiforge-windows-x64.exe<br>equiforge-linux-x64<br>equiforge-linux-arm64</code>
+      </div>
+      <div class="step">
+        <div class="step-number">02</div>
+        <div class="step-title">INITIALIZE</div>
+        <div class="step-desc">Create your wallet and chain data. Takes one second.</div>
+        <code>./equiforge init</code>
+      </div>
+      <div class="step">
+        <div class="step-number">03</div>
+        <div class="step-title">MINE</div>
+        <div class="step-desc">Auto-connects to the network. Blocks start coming in immediately.</div>
+        <code>./equiforge node --mine</code>
+      </div>
+    </div>
+
+    <div class="live-stats" id="live-stats">
+      <div>
+        <div class="live-stat-value" id="ls-height">—</div>
+        <div class="live-stat-label">Block Height</div>
+      </div>
+      <div>
+        <div class="live-stat-value" id="ls-difficulty">—</div>
+        <div class="live-stat-label">Difficulty</div>
+      </div>
+      <div>
+        <div class="live-stat-value" id="ls-peers">—</div>
+        <div class="live-stat-label">Peers</div>
+      </div>
+      <div>
+        <div class="live-stat-value" id="ls-reward">—</div>
+        <div class="live-stat-label">Block Reward</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ROADMAP -->
+<section id="roadmap">
+  <div class="section-inner reveal">
+    <div class="section-tag">// The Path Forward</div>
+    <h2 class="section-title">From Fair Currency<br>to Compute Network.</h2>
+    <p class="section-desc">EquiForge isn't just another coin. It's infrastructure for decentralized AI and compute.</p>
+
+    <div class="roadmap">
+      <div class="roadmap-item">
+        <div class="roadmap-dot done"></div>
+        <div class="roadmap-phase">Phase 1 — Complete</div>
+        <div class="roadmap-title">Foundation</div>
+        <div class="roadmap-desc">Custom PoW algorithm, UTXO blockchain, P2P networking, encrypted wallets, block explorer, fee market, chain reorg support. 4,000 lines of Rust, built from scratch.</div>
+      </div>
+      <div class="roadmap-item">
+        <div class="roadmap-dot active"></div>
+        <div class="roadmap-phase">Phase 2 — Q2 2026</div>
+        <div class="roadmap-title">Liquidity</div>
+        <div class="roadmap-desc">Wrapped EQF on Solana and Base for DEX trading. Bridge infrastructure for cross-chain transfers. Mining pool protocol for distributed hashrate.</div>
+      </div>
+      <div class="roadmap-item">
+        <div class="roadmap-dot future"></div>
+        <div class="roadmap-phase">Phase 3 — Q3 2026</div>
+        <div class="roadmap-title">Compute MVP</div>
+        <div class="roadmap-desc">WASM job submission on-chain. Miners execute compute tasks for EQF payment. Sandboxed execution with redundant verification.</div>
+      </div>
+      <div class="roadmap-item">
+        <div class="roadmap-dot future"></div>
+        <div class="roadmap-phase">Phase 4 — Q4 2026</div>
+        <div class="roadmap-title">AI Marketplace</div>
+        <div class="roadmap-desc">Decentralized AI fine-tuning and inference. Pay EQF to train models without AWS. Censorship-resistant, permissionless compute.</div>
+      </div>
+      <div class="roadmap-item">
+        <div class="roadmap-dot future"></div>
+        <div class="roadmap-phase">Phase 5 — 2027</div>
+        <div class="roadmap-title">Proof of Useful Work</div>
+        <div class="roadmap-desc">Replace PoW puzzles with real computation. Mining becomes productive. Every hash secures the chain AND does useful work.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- CTA -->
+<section class="cta-section">
+  <div class="section-inner reveal">
+    <h2 class="cta-title">EVERY COIN IS EARNED.</h2>
+    <p class="cta-desc">No premine. No insiders. No VC rounds. Just your CPU and an open network. Start mining now.</p>
+    <div class="hero-actions">
+      <a href="https://github.com/arnoac/equiforge/releases" class="btn-primary" target="_blank">⛏ DOWNLOAD MINER</a>
+      <a href="https://discord.gg/ZZ8e9NTjdR" class="btn-secondary" target="_blank">💬 JOIN DISCORD</a>
+      <a href="https://github.com/arnoac/equiforge/blob/main/WHITEPAPER.md" class="btn-secondary" target="_blank">📄 READ WHITEPAPER</a>
+    </div>
+  </div>
+</section>
+
+<!-- FOOTER -->
+<footer>
+  <div class="footer-links">
+    <a href="https://github.com/arnoac/equiforge" target="_blank">GitHub</a>
+    <a href="http://129.80.239.237:9334" target="_blank">Block Explorer</a>
+    <a href="https://github.com/arnoac/equiforge/blob/main/WHITEPAPER.md" target="_blank">Whitepaper</a>
+    <a href="https://github.com/arnoac/equiforge/releases" target="_blank">Releases</a>
+    <a href="https://x.com/eqf_crypto" target="_blank">𝕏 Twitter</a>
+    <a href="https://discord.gg/ZZ8e9NTjdR" target="_blank">Discord</a>
+  </div>
+  <div class="footer-copy">EQUIFORGE © 2026 — MIT LICENSE — BUILT FROM SCRATCH IN RUST</div>
+</footer>
+
+<script>
+// ═══ PARTICLE CANVAS ═══
+const canvas = document.getElementById('particle-canvas');
+const ctx = canvas.getContext('2d');
+
+function resize() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight * 3;
+}
+resize();
+window.addEventListener('resize', resize);
+
+const particles = [];
+const PARTICLE_COUNT = 80;
+
+for (let i = 0; i < PARTICLE_COUNT; i++) {
+  particles.push({
+    x: Math.random() * canvas.width,
+    y: Math.random() * canvas.height,
+    vx: (Math.random() - 0.5) * 0.3,
+    vy: (Math.random() - 0.5) * 0.3,
+    r: Math.random() * 1.5 + 0.5,
+    o: Math.random() * 0.4 + 0.1,
+  });
+}
+
+function drawParticles() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  for (let i = 0; i < particles.length; i++) {
+    const p = particles[i];
+    p.x += p.vx;
+    p.y += p.vy;
+
+    if (p.x < 0) p.x = canvas.width;
+    if (p.x > canvas.width) p.x = 0;
+    if (p.y < 0) p.y = canvas.height;
+    if (p.y > canvas.height) p.y = 0;
+
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(0, 240, 255, ${p.o})`;
+    ctx.fill();
+
+    for (let j = i + 1; j < particles.length; j++) {
+      const q = particles[j];
+      const dx = p.x - q.x;
+      const dy = p.y - q.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist < 150) {
+        ctx.beginPath();
+        ctx.moveTo(p.x, p.y);
+        ctx.lineTo(q.x, q.y);
+        ctx.strokeStyle = `rgba(0, 240, 255, ${0.06 * (1 - dist / 150)})`;
+        ctx.lineWidth = 0.5;
+        ctx.stroke();
+      }
+    }
+  }
+  requestAnimationFrame(drawParticles);
+}
+drawParticles();
+
+// ═══ SCROLL REVEAL ═══
+const reveals = document.querySelectorAll('.reveal');
+const observer = new IntersectionObserver((entries) => {
+  entries.forEach(e => { if (e.isIntersecting) e.target.classList.add('visible'); });
+}, { threshold: 0.15 });
+reveals.forEach(r => observer.observe(r));
+
+// ═══ SUPPLY BAR ANIMATION ═══
+const barObserver = new IntersectionObserver((entries) => {
+  entries.forEach(e => {
+    if (e.isIntersecting) {
+      document.getElementById('supply-bar').style.width = '50%';
+    }
+  });
+}, { threshold: 0.3 });
+const supplyVisual = document.querySelector('.supply-visual');
+if (supplyVisual) barObserver.observe(supplyVisual);
+
+// ═══ LIVE STATS FROM EXPLORER ═══
+async function fetchLiveStats() {
+  try {
+    const res = await fetch('http://129.80.239.237:9334', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ method: 'getinfo', params: [], id: 1 }),
+    });
+    const data = await res.json();
+    if (data.result) {
+      document.getElementById('ls-height').textContent = data.result.height.toLocaleString();
+      document.getElementById('ls-difficulty').textContent = data.result.fractional_difficulty?.toFixed(1) || '—';
+      document.getElementById('ls-peers').textContent = data.result.peers;
+      document.getElementById('ls-reward').textContent = data.result.block_reward + ' EQF';
+    }
+  } catch (e) {
+    // Node might be offline
+  }
+}
+fetchLiveStats();
+setInterval(fetchLiveStats, 15000);
+</script>
+
+</body>
+</html>
