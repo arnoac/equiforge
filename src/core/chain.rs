@@ -38,6 +38,14 @@ impl UtxoSet {
 }
 
 // ─── LWMA Difficulty ────────────────────────────────────────────────
+//
+// NOTE: f64 is used here for the LWMA *calculation* only. This is safe because:
+//   - The output is always quantized to u32 via fractional_to_integer_difficulty()
+//   - The u32 goes into the header and is compared deterministically
+//   - Two nodes with the same timestamps always produce the same u32
+//   - fractional_difficulty is a cached optimization, NOT a consensus value
+//
+// The consensus-critical fork choice uses u128 cumulative work (see block_work below).
 
 const DIFFICULTY_WINDOW: usize = 60;
 const MIN_DIFFICULTY: u32 = 4;
@@ -76,10 +84,15 @@ pub fn calculate_next_difficulty(current: u32, timestamps: &[u64]) -> u32 {
     fractional_to_integer_difficulty(calculate_next_difficulty_fractional(current as f64, timestamps))
 }
 
-// ─── Cumulative Work ────────────────────────────────────────────────
+// ─── Cumulative Work (Integer — Consensus Safe) ─────────────────────
+//
+// CRITICAL: Fork choice must NEVER use floating point.
+// block_work returns exact integer work: 2^difficulty via bit shift.
+// u128 supports difficulty up to 127 — far beyond any reachable value
+// (your max difficulty is 200, but realistic difficulty stays well under 64).
 
-fn block_work(difficulty: u32) -> f64 {
-    2.0_f64.powi(difficulty as i32)
+fn block_work(difficulty: u32) -> u128 {
+    1u128 << (difficulty as u128).min(127)
 }
 
 
@@ -116,8 +129,8 @@ pub struct Chain {
     blocks: HashMap<Hash256, Block>,
     /// Height index for the ACTIVE chain only
     height_index: HashMap<u64, Hash256>,
-    /// Cumulative work for each block hash
-    cumulative_work: HashMap<Hash256, f64>,
+    /// Cumulative work for each block hash (u128 — deterministic fork choice)
+    cumulative_work: HashMap<Hash256, u128>,
     /// Parent -> children mapping (for finding forks)
     children: HashMap<Hash256, Vec<Hash256>>,
     /// UTXO set for the active chain
@@ -240,7 +253,7 @@ impl Chain {
         let mut cumulative_work = HashMap::new();
         let mut children: HashMap<Hash256, Vec<Hash256>> = HashMap::new();
 
-        let mut cum_work = 0.0;
+        let mut cum_work: u128 = 0;
         for h in 0..=height {
             if let Some(hash) = storage.get_hash_at_height(h).map_err(|e| e.to_string())? {
                 if let Some(header) = storage.get_header(&hash).map_err(|e| e.to_string())? {
@@ -291,7 +304,7 @@ impl Chain {
         let genesis_miner = [0u8; 32];
         let community_fund = [0xCF; 32];
         let reward = block_reward(0);
-        let coinbase = Transaction::new_coinbase(0, reward, genesis_miner, community_fund);
+        let coinbase = Transaction::new_coinbase(0, reward, genesis_miner, community_fund, "");
         let ts = genesis_timestamp();
         // Genesis version is fixed at 2 (the original protocol version) to ensure
         // the genesis hash never changes when PROTOCOL_VERSION is bumped
@@ -412,8 +425,8 @@ impl Chain {
             self.height = expected_height;
         }
 
-        // Store block and update indexes
-        let parent_work = *self.cumulative_work.get(&parent_hash).unwrap_or(&0.0);
+        // Store block and update indexes (u128 cumulative work — deterministic)
+        let parent_work = self.cumulative_work.get(&parent_hash).copied().unwrap_or(0);
         let new_work = parent_work + block_work(block.header.difficulty_target);
         self.cumulative_work.insert(block_hash, new_work);
         self.headers.insert(block_hash, block.header.clone());
@@ -424,12 +437,12 @@ impl Chain {
 
         // Check if we need to reorg (side chain has more work than current tip)
         if !extends_tip {
-            let tip_work = *self.cumulative_work.get(&self.tip).unwrap_or(&0.0);
+            let tip_work = self.cumulative_work.get(&self.tip).copied().unwrap_or(0);
             if new_work > tip_work {
-                tracing::info!("🔄 Reorg detected! Side chain has more work ({:.0} vs {:.0})", new_work, tip_work);
+                tracing::info!("🔄 Reorg detected! Side chain has more work ({} vs {})", new_work, tip_work);
                 self.reorg_to(block_hash)?;
             } else {
-                tracing::debug!("📦 Stored side chain block at height {} (work {:.0} vs tip {:.0})",
+                tracing::debug!("📦 Stored side chain block at height {} (work {} vs tip {})",
                     expected_height, new_work, tip_work);
             }
         }
@@ -504,11 +517,60 @@ impl Chain {
             }
         }
 
-        // Connect new blocks
+        // Connect new blocks — WITH full transaction validation.
+        // If any block fails validation, roll back everything and restore old chain.
+        let mut connected_undos: Vec<(Hash256, BlockUndo)> = Vec::new();
+
         for bh in &connect {
             let block = self.blocks.get(bh).ok_or(BlockError::OrphanBlock)?.clone();
+
+            // ── Validate transactions against current UTXO state ──
+            let expected_reward = block_reward(block.header.height);
+            let validate_result = (|| -> Result<(), BlockError> {
+                let total_fees = self.calculate_block_fees(&block)?;
+                if block.transactions[0].total_output() > expected_reward + total_fees {
+                    return Err(BlockError::InvalidCoinbaseAmount);
+                }
+                for tx in &block.transactions[1..] {
+                    self.validate_transaction(tx, block.header.height)?;
+                }
+                Ok(())
+            })();
+
+            if let Err(e) = validate_result {
+                tracing::error!(
+                    "🚨 Reorg block #{} ({}) failed tx validation: {} — aborting reorg",
+                    block.header.height, &hex::encode(bh)[..16], e
+                );
+
+                // Roll back any blocks we already connected in this reorg
+                for (rollback_hash, rollback_undo) in connected_undos.iter().rev() {
+                    self.disconnect_block_utxos(rollback_undo);
+                    self.undo_cache.remove(rollback_hash);
+                }
+
+                // Reconnect the old chain blocks we disconnected
+                for old_bh in disconnect.iter().rev() {
+                    let old_block = self.blocks.get(old_bh).cloned();
+                    if let Some(ob) = old_block {
+                        let _ = self.connect_block_utxos(&ob);
+                    }
+                }
+
+                // Remove the invalid side-chain block so we don't try again
+                self.blocks.remove(bh);
+                self.headers.remove(bh);
+                self.cumulative_work.remove(bh);
+
+                return Err(BlockError::InvalidTransaction(
+                    format!("reorg aborted: side chain block #{} invalid: {}", block.header.height, e)
+                ));
+            }
+
+            // Validation passed — connect the block
             let undo = self.connect_block_utxos(&block);
             self.undo_cache.insert(*bh, undo.clone());
+            connected_undos.push((*bh, undo.clone()));
 
             if !self.batch_mode {
                 if let Some(ref storage) = self.storage {
@@ -999,6 +1061,18 @@ mod tests {
         let chain = Chain::new();
         let genesis_hash = chain.tip;
         let work = chain.cumulative_work.get(&genesis_hash).unwrap();
-        assert!(*work > 0.0);
+        assert!(*work > 0);
+    }
+
+    #[test]
+    fn test_block_work_deterministic() {
+        // Verify integer block_work is exact (no floating point ambiguity)
+        assert_eq!(block_work(8), 256);        // 2^8
+        assert_eq!(block_work(16), 65536);     // 2^16
+        assert_eq!(block_work(32), 4294967296); // 2^32
+        // u128 handles up to 2^127
+        assert_eq!(block_work(127), 1u128 << 127);
+        // Clamped at 127 for safety
+        assert_eq!(block_work(200), 1u128 << 127);
     }
 }

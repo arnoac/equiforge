@@ -48,6 +48,7 @@ pub struct Transaction {
     pub lock_time: u64,
 }
 
+
 impl Transaction {
     /// Create a coinbase transaction (mining reward)
     pub fn new_coinbase(
@@ -55,9 +56,14 @@ impl Transaction {
         reward: u64,
         miner_pubkey_hash: Hash256,
         community_fund_hash: Hash256,
+        miner_tag: &str,
     ) -> Self {
         let community_amount = super::params::community_fund_amount(reward);
         let miner_amount = reward - community_amount;
+
+        let mut sig = height.to_le_bytes().to_vec();
+        let tag_bytes = miner_tag.as_bytes();
+        sig.extend_from_slice(&tag_bytes[..tag_bytes.len().min(32)]);
 
         let mut outputs = vec![TxOutput {
             amount: miner_amount,
@@ -80,7 +86,7 @@ impl Transaction {
                     txid: NULL_HASH,
                     vout: 0xFFFFFFFF,
                 },
-                signature: height.to_le_bytes().to_vec(),
+                signature: sig,
                 pubkey: vec![],
                 script_sig: vec![],
                 sequence: 0xFFFFFFFF,
@@ -94,6 +100,19 @@ impl Transaction {
         self.inputs.len() == 1
             && self.inputs[0].previous_output.txid == NULL_HASH
             && self.inputs[0].previous_output.vout == 0xFFFFFFFF
+    }
+
+    /// Extract the miner tag from a coinbase transaction's scriptSig.
+    /// Returns empty string for pre-tag blocks or non-coinbase txs.
+    pub fn coinbase_tag(&self) -> String {
+        if !self.is_coinbase() || self.inputs.is_empty() {
+            return String::new();
+        }
+        let sig = &self.inputs[0].signature;
+        if sig.len() <= 8 {
+            return String::new(); // height only, no tag
+        }
+        String::from_utf8_lossy(&sig[8..]).to_string()
     }
 
     pub fn total_output(&self) -> u64 {
@@ -268,7 +287,7 @@ mod tests {
     fn test_coinbase_transaction() {
         let miner_hash = [1u8; 32];
         let fund_hash = [2u8; 32];
-        let tx = Transaction::new_coinbase(0, 50 * super::super::params::COIN, miner_hash, fund_hash);
+        let tx = Transaction::new_coinbase(0, 50 * super::super::params::COIN, miner_hash, fund_hash, "");
         assert!(tx.is_coinbase());
         assert_eq!(tx.outputs.len(), 2);
         assert_eq!(tx.total_output(), 50 * super::super::params::COIN);
@@ -278,7 +297,7 @@ mod tests {
     fn test_tx_hash_deterministic() {
         let miner_hash = [1u8; 32];
         let fund_hash = [2u8; 32];
-        let tx = Transaction::new_coinbase(0, 5_000_000_000, miner_hash, fund_hash);
+        let tx = Transaction::new_coinbase(0, 5_000_000_000, miner_hash, fund_hash, "");
         assert_eq!(tx.hash(), tx.hash());
         assert_ne!(tx.hash(), NULL_HASH);
     }
@@ -304,7 +323,7 @@ mod tests {
 
     #[test]
     fn test_merkle_root_single_tx() {
-        let tx = Transaction::new_coinbase(0, 5_000_000_000, [1u8; 32], [2u8; 32]);
+        let tx = Transaction::new_coinbase(0, 5_000_000_000, [1u8; 32], [2u8; 32], "");
         let block = Block {
             header: BlockHeader {
                 version: 1,

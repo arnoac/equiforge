@@ -120,7 +120,10 @@ fn build_locator(chain: &Chain, max: usize) -> Vec<Hash256> {
 
 
 // ─── Per-Peer Rate Limiter ──────────────────────────────────────────
+// TODO: Wire into handle_connection — create per-connection instance,
+//       call record_send/record_recv on each message, disconnect if limited.
 
+#[allow(dead_code)]
 struct PeerRateLimiter {
     /// Bytes sent in current window
     bytes_sent: u64,
@@ -134,6 +137,7 @@ struct PeerRateLimiter {
     max_recv_rate: u64,
 }
 
+#[allow(dead_code)]
 impl PeerRateLimiter {
     fn new() -> Self {
         Self {
@@ -557,22 +561,18 @@ async fn handle_connection(mut stream: TcpStream, state: Arc<NodeState>, peer_ad
     }
 
     if peer_height > our_height {
-        tracing::info!("📥 Peer {} ahead ({} vs {}), syncing{}...",
-            peer_addr, peer_height, our_height, if peer_is_v2 { " (headers-first)" } else { "" });
+        tracing::info!("📥 Peer {} ahead ({} vs {}), syncing (headers-first with locator)...",
+            peer_addr, peer_height, our_height);
 
-        if peer_is_v2 {
-            // Headers-first sync: get headers, validate PoW, then request blocks
-            let _ = write_message(&mut stream, &NetMessage::GetHeaders {
-                start_height: our_height + 1,
-                count: (peer_height - our_height).min(2000) as u32,
-            }).await;
-        } else {
-            // Legacy sync: get full blocks directly
-            let _ = write_message(&mut stream, &NetMessage::GetBlocks {
-                start_height: our_height + 1,
-                count: (peer_height - our_height).min(500) as u32,
-            }).await;
-        }
+        // Always use locator-based sync — handles forks correctly
+        let locator = {
+            let chain = state.chain.read().await;
+            build_locator(&chain, 32)
+        };
+        let _ = write_message(&mut stream, &NetMessage::GetHeadersFrom {
+            locator,
+            count: 2000,
+        }).await;
     }
 
     let _ = write_message(&mut stream, &NetMessage::GetPeers).await;
@@ -687,17 +687,24 @@ async fn handle_message(
                 Err(crate::core::chain::BlockError::OrphanBlock) => {
                     let our_height = chain.height;
                     drop(chain);
-                    tracing::info!("📥 Block #{} is orphan, syncing from {} (we're at {})", height, peer_addr, our_height);
-                    write_message(stream, &NetMessage::GetBlocks {
-                        start_height: our_height + 1,
-                        count: 500,
+                    tracing::info!("📥 Block #{} is orphan, locator-syncing from {} (we're at {})", height, peer_addr, our_height);
+                    // Use locator to handle forks correctly — never assume linear chain
+                    let locator = {
+                        let chain = state.chain.read().await;
+                        build_locator(&chain, 32)
+                    };
+                    write_message(stream, &NetMessage::GetHeadersFrom {
+                        locator,
+                        count: 2000,
                     }).await?;
                 }
                 Err(e) => {
                     tracing::warn!("❌ Block #{} from {} rejected: {}", height, peer_addr, e);
+                    // OrphanBlock and DuplicateBlock are normal during propagation — no penalty
                     let is_harmless = matches!(e,
                         crate::core::chain::BlockError::DuplicateBlock |
-                        crate::core::chain::BlockError::InvalidHeight
+                        crate::core::chain::BlockError::InvalidHeight |
+                        crate::core::chain::BlockError::OrphanBlock
                     );
                     if !is_harmless {
                         let mut sb = state.scoreboard.lock().await;
@@ -814,12 +821,26 @@ async fn handle_message(
             };
             tracing::info!("📥 Synced {}/{} from {} (height: {})", accepted, count, peer_addr, our_height);
 
+            // Update peer's advertised height based on blocks received
+            if let Some(last_block) = blocks.last() {
+                let mut peers = state.peers.write().await;
+                if let Some(peer) = peers.get_mut(peer_addr) {
+                    peer.best_height = peer.best_height.max(last_block.header.height);
+                }
+                drop(peers);
+            }
+
             let peers = state.peers.read().await;
             if let Some(peer) = peers.get(peer_addr) {
                 if peer.best_height > our_height {
                     drop(peers);
-                    write_message(stream, &NetMessage::GetBlocks {
-                        start_height: our_height + 1, count: 500,
+                    // Use locator for fork-safe continuation
+                    let locator = {
+                        let chain = state.chain.read().await;
+                        build_locator(&chain, 32)
+                    };
+                    write_message(stream, &NetMessage::GetHeadersFrom {
+                        locator, count: 2000,
                     }).await?;
                 }
             }
@@ -929,6 +950,14 @@ async fn handle_message(
             tracing::info!("📥 Got {} headers from {} (heights {}→{}), need {} blocks",
                 count, peer_addr, first_height, last_height, need_blocks.len());
 
+            // Update peer's advertised height so sync continues correctly
+            {
+                let mut peers = state.peers.write().await;
+                if let Some(peer) = peers.get_mut(peer_addr) {
+                    peer.best_height = peer.best_height.max(last_height);
+                }
+            }
+
             // Request full block data for validated headers
             if !need_blocks.is_empty() {
                 // Request in batches of 100
@@ -993,6 +1022,15 @@ async fn handle_message(
             let our_height = state.chain.read().await.height;
             tracing::info!("📥 BlockData: accepted {}/{} from {} (height: {})", accepted, count, peer_addr, our_height);
 
+            // Update peer's advertised height based on blocks received
+            if let Some(last_block) = blocks.last() {
+                let mut peers = state.peers.write().await;
+                if let Some(peer) = peers.get_mut(peer_addr) {
+                    peer.best_height = peer.best_height.max(last_block.header.height);
+                }
+                drop(peers);
+            }
+
             // Continue syncing if peer has more blocks
             let peer_best = {
                 let peers = state.peers.read().await;
@@ -1001,7 +1039,7 @@ async fn handle_message(
             if let Some(best_height) = peer_best {
                 if best_height > our_height {
                     // If we accepted some blocks, keep going with headers-first
-                    // If we accepted none, fall back to sequential GetBlocks
+                    // If we accepted none, try locator resync to find fork point
                     if accepted > 0 {
                         let locator = {
                         let chain = state.chain.read().await;
@@ -1014,10 +1052,13 @@ async fn handle_message(
                     ).await?;
 
                     } else {
-                        tracing::info!("📥 BlockData all rejected ({}), falling back to sequential sync from {}", last_reject_reason, peer_addr);
-                        write_message(stream, &NetMessage::GetBlocks {
-                            start_height: our_height + 1,
-                            count: 500,
+                        tracing::info!("📥 BlockData all rejected ({}), locator resync from {}", last_reject_reason, peer_addr);
+                        let locator = {
+                            let chain = state.chain.read().await;
+                            build_locator(&chain, 32)
+                        };
+                        write_message(stream, &NetMessage::GetHeadersFrom {
+                            locator, count: 2000,
                         }).await?;
                     }
                 }
@@ -1037,6 +1078,15 @@ async fn handle_message(
                     tracing::debug!("📦 Compact block already known: {}", &hex::encode(block_hash)[..16]);
                     return Ok(());
                 }
+            }
+
+            // Verify PoW BEFORE any reconstruction — prevents resource exhaustion
+            if leading_zero_bits(&block_hash) < header.difficulty_target {
+                tracing::warn!("❌ Compact block from {} has invalid PoW, banning", peer_addr);
+                let mut sb = state.scoreboard.lock().await;
+                sb.record_offense(peer_addr, Offense::InvalidBlock);
+                sb.record_offense(peer_addr, Offense::InvalidBlock); // double strike for bad PoW
+                return Ok(());
             }
 
             // Build reconstruction vector: [coinbase, ...]
@@ -1082,10 +1132,14 @@ async fn handle_message(
                     Err(crate::core::chain::BlockError::OrphanBlock) => {
                         let our_height = chain.height;
                         drop(chain);
-                        tracing::info!("📥 Compact block is orphan, syncing from {} (we're at {})", peer_addr, our_height);
-                        write_message(stream, &NetMessage::GetBlocks {
-                            start_height: our_height + 1,
-                            count: 500,
+                        tracing::info!("📥 Compact block is orphan, locator-syncing from {} (we're at {})", peer_addr, our_height);
+                        let locator = {
+                            let chain = state.chain.read().await;
+                            build_locator(&chain, 32)
+                        };
+                        write_message(stream, &NetMessage::GetHeadersFrom {
+                            locator,
+                            count: 2000,
                         }).await?;
                     }
                     Err(e) => {
@@ -1098,6 +1152,15 @@ async fn handle_message(
             // Store pending and request missing txs
             {
                 let mut pending = state.pending_compacts.lock().await;
+                // Cap at 50 to prevent memory exhaustion
+                if pending.len() >= 50 {
+                    if let Some(oldest_hash) = pending.iter()
+                        .min_by_key(|(_, pc)| pc.created_at)
+                        .map(|(h, _)| *h) {
+                        tracing::debug!("🗑️ Evicting oldest pending compact to make room");
+                        pending.remove(&oldest_hash);
+                    }
+                }
                 pending.insert(block_hash, PendingCompact {
                     header,
                     txs,
@@ -1229,6 +1292,26 @@ pub async fn start_node(
 
                 // Clean up expired bans
                 { state.scoreboard.lock().await.cleanup(); }
+
+                // Expire stale pending compact blocks (>30s old)
+                {
+                    let mut pending = state.pending_compacts.lock().await;
+                    let now = std::time::Instant::now();
+                    let before = pending.len();
+                    pending.retain(|hash, pc| {
+                        let age = now.duration_since(pc.created_at).as_secs();
+                        if age > 30 {
+                            tracing::debug!("🗑️ Expiring stale compact block {}", &hex::encode(hash)[..16]);
+                            false
+                        } else {
+                            true
+                        }
+                    });
+                    let expired = before - pending.len();
+                    if expired > 0 {
+                        tracing::debug!("🗑️ Expired {} stale compact blocks", expired);
+                    }
+                }
 
                 let peer_count = state.peers.read().await.len();
 

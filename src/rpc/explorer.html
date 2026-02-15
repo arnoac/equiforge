@@ -199,7 +199,7 @@ async function rDash(){
     h+='<tr onclick="vBlock(\''+b.hash+'\')">';
     h+='<td><strong style="color:var(--t1)">'+b.height+'</strong></td>';
     h+='<td><span class="hl">'+sh(b.hash)+'</span></td>';
-    h+='<td><span class="hl" onclick="event.stopPropagation();vAddr(\''+b.miner+'\')">'+sh(b.miner,6)+'</span></td>';
+    h+='<td>'+(b.miner_tag?'<span style="color:var(--t1);font-weight:600">'+b.miner_tag+'</span> ':'')+'<span class="hl" onclick="event.stopPropagation();vAddr(\''+b.miner+'\')">'+sh(b.miner,6)+'</span></td>';
     h+='<td>'+b.tx_count+'</td>';
     h+='<td class="m" style="font-size:11px">'+fs(b.size)+'</td>';
     h+='<td><span class="c-green">'+fe(b.reward)+'</span></td>';
@@ -228,7 +228,7 @@ async function rBlocks(){
     h+='<tr onclick="vBlock(\''+b.hash+'\')">';
     h+='<td><strong style="color:var(--t1)">'+b.height+'</strong></td>';
     h+='<td><span class="hl">'+sh(b.hash)+'</span></td>';
-    h+='<td><span class="hl" onclick="event.stopPropagation();vAddr(\''+b.miner+'\')">'+sh(b.miner,6)+'</span></td>';
+    h+='<td>'+(b.miner_tag?'<span style="color:var(--t1);font-weight:600">'+b.miner_tag+'</span> ':'')+'<span class="hl" onclick="event.stopPropagation();vAddr(\''+b.miner+'\')">'+sh(b.miner,6)+'</span></td>';
     h+='<td>'+b.tx_count+'</td><td class="m" style="font-size:11px">'+fs(b.size)+'</td>';
     h+='<td><span class="bg bg-amber">'+b.difficulty+'</span></td>';
     h+='<td class="c-green">'+fe(b.reward)+'</td>';
@@ -293,7 +293,7 @@ async function vBlock(id){
     h+='<div class="r"><div class="k">Hash</div><div class="v"><span class="fh">'+b.hash+'</span></div></div>';
     h+='<div class="r"><div class="k">Previous</div><div class="v">'+(b.height>0?'<a class="hl" onclick="vBlock(\''+b.prev_hash+'\')">'+b.prev_hash+'</a>':'Genesis')+'</div></div>';
     h+='<div class="r"><div class="k">Timestamp</div><div class="v">'+ft(b.timestamp)+' <span style="color:var(--t3)">('+ta(b.timestamp)+')</span></div></div>';
-    h+='<div class="r"><div class="k">Miner</div><div class="v"><a class="hl" onclick="vAddr(\''+b.miner+'\')">'+b.miner+'</a></div></div>';
+    h+='<div class="r"><div class="k">Miner</div><div class="v">'+(b.miner_tag?'<span class="bg bg-blue" style="margin-right:8px">'+b.miner_tag+'</span>':'')+'<a class="hl" onclick="vAddr(\''+b.miner+'\')">'+b.miner+'</a></div></div>';
     h+='<div class="r"><div class="k">Reward</div><div class="v"><span class="c-green">'+fe(b.reward)+' EQF</span> + <span class="c-cyan">'+fe(b.fees)+' EQF fees</span></div></div>';
     var btLabel=b.block_time<90?'<span class="bg bg-green" style="margin-left:6px">fast</span>':b.block_time>180?'<span class="bg bg-red" style="margin-left:6px">slow</span>':'';
     h+='<div class="r"><div class="k">Block Time</div><div class="v">'+b.block_time+'s '+btLabel+'</div></div>';
@@ -346,29 +346,54 @@ async function vTx(txid){
 async function vAddr(addr){
   try{var a=await rpc('getaddress',[addr]);
     var h='<button class="back fi" onclick="go(tab)">&#8592; Back</button>';
+
+    // ── Address header with balance ──
     h+='<div class="card fi"><div class="ah"><div><div style="font-size:10px;color:var(--t4);text-transform:uppercase;letter-spacing:.8px;font-weight:700;margin-bottom:6px">Address</div><div class="fh">'+a.address+'</div></div>';
     h+='<div class="ah-bal">'+fe(a.balance)+' <span class="u">EQF</span></div></div>';
+
+    // ── Balance breakdown ──
     h+='<div class="card-b"><div class="dg">';
-    h+='<div class="r"><div class="k">Balance</div><div class="v c-green" style="font-weight:700">'+fe(a.balance)+' EQF</div></div>';
-    h+='<div class="r"><div class="k">Received</div><div class="v">'+fe(a.total_received)+' EQF</div></div>';
-    h+='<div class="r"><div class="k">Sent</div><div class="v">'+fe(a.total_sent)+' EQF</div></div>';
+
+    // Spendable vs Immature breakdown
+    if(a.immature && a.immature > 0){
+      h+='<div class="r"><div class="k">Spendable</div><div class="v c-green" style="font-weight:700">'+fe(a.spendable)+' EQF</div></div>';
+      h+='<div class="r"><div class="k">Immature</div><div class="v c-amber" style="font-weight:600">'+fe(a.immature)+' EQF <span style="font-size:11px;color:var(--t3);font-weight:400">(needs 100 confirmations)</span></div></div>';
+      h+='<div class="r"><div class="k">Total Balance</div><div class="v" style="font-weight:700">'+fe(a.balance)+' EQF</div></div>';
+    } else {
+      h+='<div class="r"><div class="k">Balance</div><div class="v c-green" style="font-weight:700">'+fe(a.balance)+' EQF</div></div>';
+    }
+
+    h+='<div class="r"><div class="k">Received</div><div class="v c-green">'+fe(a.total_received)+' EQF</div></div>';
+    h+='<div class="r"><div class="k">Sent</div><div class="v'+(a.total_sent>0?' c-red':'')+'">'+(a.total_sent>0?fe(a.total_sent)+' EQF':'0 EQF')+'</div></div>';
     h+='<div class="r"><div class="k">Transactions</div><div class="v">'+a.tx_count+'</div></div>';
-    h+='<div class="r"><div class="k">UTXOs</div><div class="v">'+a.utxo_count+' unspent outputs</div></div>';
+    h+='<div class="r"><div class="k">UTXOs</div><div class="v">'+a.utxo_count+' unspent output'+(a.utxo_count!==1?'s':'')+'</div></div>';
     h+='</div></div></div>';
 
+    // ── Transaction list ──
     if(a.transactions.length>0){
-      h+='<div class="card fi"><div class="card-h"><h2>Transactions</h2><span class="cnt">'+a.tx_count+' total</span></div><div class="card-b"><table><thead><tr><th>TXID</th><th>Block</th><th>Type</th><th>Amount</th><th>Time</th></tr></thead><tbody>';
+      h+='<div class="card fi"><div class="card-h"><h2>Transactions</h2><span class="cnt">'+a.tx_count+' total</span></div><div class="card-b"><table><thead><tr><th>TXID</th><th>Block</th><th>Type</th><th>Received</th><th>Sent</th><th>Net</th><th>Time</th></tr></thead><tbody>';
       for(var i=0;i<a.transactions.length;i++){var tx=a.transactions[i];
-        var badge=tx.is_coinbase?'<span class="bg bg-cyan">mined</span>':tx.net>0?'<span class="bg bg-green">in</span>':'<span class="bg bg-red">out</span>';
-        var amtClass=tx.net>=0?'c-green':'c-red';var amtSign=tx.net>=0?'+':'';
-        h+='<tr onclick="vTx(\''+tx.txid+'\')"><td><span class="hl">'+sh(tx.txid)+'</span></td><td><a class="hl" onclick="event.stopPropagation();vBlock(\''+tx.block_height+'\')">'+tx.block_height+'</a></td><td>'+badge+'</td><td class="'+amtClass+'" style="font-weight:600">'+amtSign+fe(tx.net)+' EQF</td><td style="color:var(--t3)">'+ta(tx.timestamp)+'</td></tr>';}
+        var badge=tx.is_coinbase?'<span class="bg bg-cyan">mined</span>':tx.sent>0&&tx.received>0?'<span class="bg bg-purple">self</span>':tx.sent>0?'<span class="bg bg-red">out</span>':'<span class="bg bg-green">in</span>';
+        var netClass=tx.net>=0?'c-green':'c-red';var netSign=tx.net>=0?'+':'';
+        var recvStr=tx.received>0?'<span class="c-green">+'+fe(tx.received)+'</span>':'\u2014';
+        var sentStr=tx.sent>0?'<span class="c-red">-'+fe(tx.sent)+'</span>':'\u2014';
+        h+='<tr onclick="vTx(\''+tx.txid+'\')"><td><span class="hl">'+sh(tx.txid)+'</span></td><td><a class="hl" onclick="event.stopPropagation();vBlock(\''+tx.block_height+'\')">'+tx.block_height+'</a></td><td>'+badge+'</td><td>'+recvStr+'</td><td>'+sentStr+'</td><td class="'+netClass+'" style="font-weight:600">'+netSign+fe(tx.net)+' EQF</td><td style="color:var(--t3)">'+ta(tx.timestamp)+'</td></tr>';}
       h+='</tbody></table></div></div>';}
 
+    // ── UTXO list with maturity badges ──
     if(a.utxos.length>0){
-      h+='<div class="card fi"><div class="card-h"><h2>UTXOs</h2><span class="cnt">'+a.utxo_count+'</span></div><div class="card-b"><table><thead><tr><th>TXID</th><th>Output</th><th>Amount</th><th>Block</th><th>Conf</th><th>Type</th></tr></thead><tbody>';
+      h+='<div class="card fi"><div class="card-h"><h2>UTXOs</h2><span class="cnt">'+a.utxo_count+'</span></div><div class="card-b"><table><thead><tr><th>TXID</th><th>Output</th><th>Amount</th><th>Block</th><th>Conf</th><th>Status</th></tr></thead><tbody>';
       a.utxos.sort(function(a,b){return b.height-a.height});
       for(var i=0;i<a.utxos.length;i++){var u=a.utxos[i];
-        h+='<tr><td><span class="hl" onclick="vTx(\''+u.txid+'\')">'+sh(u.txid)+'</span></td><td class="m" style="font-size:11px">'+u.vout+'</td><td class="c-green" style="font-weight:600">'+fe(u.amount)+' EQF</td><td><a class="hl" onclick="vBlock(\''+u.height+'\')">'+u.height+'</a></td><td>'+fm(u.confirmations)+'</td><td>'+(u.coinbase?'<span class="bg bg-cyan">mined</span>':'<span class="bg bg-blue">tx</span>')+'</td></tr>';}
+        var statusBadge;
+        if(u.coinbase && !u.mature){
+          statusBadge='<span class="bg bg-amber">immature</span><span style="font-size:10px;color:var(--t3);margin-left:4px">'+(100-u.confirmations)+' blocks left</span>';
+        } else if(u.coinbase){
+          statusBadge='<span class="bg bg-cyan">mined</span><span class="bg bg-green" style="margin-left:3px">spendable</span>';
+        } else {
+          statusBadge='<span class="bg bg-blue">tx</span><span class="bg bg-green" style="margin-left:3px">spendable</span>';
+        }
+        h+='<tr><td><span class="hl" onclick="vTx(\''+u.txid+'\')">'+sh(u.txid)+'</span></td><td class="m" style="font-size:11px">'+u.vout+'</td><td class="c-green" style="font-weight:600">'+fe(u.amount)+' EQF</td><td><a class="hl" onclick="vBlock(\''+u.height+'\')">'+u.height+'</a></td><td>'+fm(u.confirmations)+'</td><td>'+statusBadge+'</td></tr>';}
       h+='</tbody></table></div></div>';}
     document.getElementById('ct').innerHTML=h;window.scrollTo({top:0,behavior:'smooth'});
   }catch(e){showErr(e.message)}

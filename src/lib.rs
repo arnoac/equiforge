@@ -6,3 +6,4 @@ pub mod network;
 pub mod rpc;
 pub mod storage;
 pub mod pow;
+pub mod pool;

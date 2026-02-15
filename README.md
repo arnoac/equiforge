@@ -1,246 +1,488 @@
-<div align="center">
+# EquiForge
 
-# ⛏️ EquiForge
+A fair, accessible, ASIC-resistant blockchain built in Rust.
 
-**A fair, accessible, ASIC-resistant blockchain built from scratch in Rust.**
-
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Rust](https://img.shields.io/badge/Rust-1.75%2B-orange.svg)](https://www.rust-lang.org/)
-[![Network](https://img.shields.io/badge/Network-LIVE-brightgreen.svg)](#start-mining)
-
-*CPU-mineable • 42M max supply • 90-second blocks • Memory-hard PoW*
-
-</div>
+EquiForge uses **EquiHash-X**, a memory-hard proof-of-work algorithm requiring 4 MB per hash with 64 mixing iterations, making dedicated mining hardware impractical while keeping CPUs and GPUs competitive. Anyone with a computer can mine.
 
 ---
 
-## Why EquiForge?
+## Network Parameters
 
-Most cryptocurrencies have been captured by ASIC farms and mining pools, making it impossible for regular people to participate. EquiForge is different:
+| Parameter | Value |
+|-----------|-------|
+| Max Supply | 42,000,000 EQF |
+| Block Reward | 50 EQF (47.5 miner + 2.5 community fund) |
+| Block Time | 90 seconds |
+| Halving Interval | 2,103,840 blocks (~6 years) |
+| Difficulty Adjustment | Every block (60-block rolling window) |
+| Max Block Size | 4 MB |
+| Coinbase Maturity | 100 blocks |
+| P2P Port | 9333 (mainnet) / 19333 (testnet) |
+| RPC/Explorer Port | 9334 (mainnet) / 19334 (testnet) |
+| PoW Algorithm | EquiHash-X v1 (memory-hard, 4 MB/hash) |
 
-- **EquiHash-X** — A custom memory-hard proof-of-work algorithm requiring 4 MB RAM per hash. ASICs can't economically compete with CPUs.
-- **Fair launch** — No premine, no ICO, no VC allocation. Every coin is mined.
-- **Simple** — Download the binary, run one command, start mining. No pool required.
+---
 
-## Start Mining
+## Quick Start
 
-### Option 1: Download Binary (Recommended)
-
-Download the latest release for your platform from [Releases](https://github.com/equiforge/equiforge/releases):
-
-| Platform | File |
-|---|---|
-| Windows x64 | `equiforge-windows-x64.exe` |
-| Linux x64 | `equiforge-linux-x64` |
-| Linux ARM64 | `equiforge-linux-arm64` |
-
-Then run:
-
-```bash
-# Initialize (first time only)
-./equiforge init
-
-# Start mining — automatically connects to the network
-./equiforge node --mine
-```
-
-That's it. You're mining EquiForge.
-
-### Option 2: Build from Source
+### 1. Install
 
 ```bash
-# Install Rust (if needed)
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-
-# Clone and build
-git clone https://github.com/equiforge/equiforge.git
+git clone https://github.com/yourusername/equiforge.git
 cd equiforge
 cargo build --release
-
-# Initialize and mine
-./target/release/equiforge init
-./target/release/equiforge node --mine
 ```
+
+The binary is at `./target/release/equiforge` (Linux/macOS) or `.\target\release\equiforge.exe` (Windows).
+
+### 2. Initialize
+
+```bash
+equiforge init --testnet
+```
+
+This creates your wallet and data directory. Your wallet address will be displayed — save it.
+
+### 3. Run a Node
+
+```bash
+equiforge node --testnet
+```
+
+Your node will connect to seed nodes, sync the blockchain, and begin participating in the network. The built-in block explorer is available at `http://localhost:19334`.
+
+---
+
+## Mining
+
+EquiForge offers three ways to mine, from simplest to most advanced.
+
+### Method 1: Solo Mining (Easiest)
+
+Mine directly on your own node. You find blocks yourself and keep the full miner reward (47.5 EQF per block). Simple but you may wait a long time between blocks as difficulty increases.
+
+```bash
+equiforge node --mine --testnet
+```
+
+**Options:**
+
+| Flag | Description |
+|------|-------------|
+| `--mine` or `-m` | Enable mining |
+| `--threads N` or `-t N` | CPU threads to use (default: all cores) |
+| `--miner-tag "name"` | Identity tag embedded in blocks you mine (max 32 chars) |
+
+**Examples:**
+
+```bash
+# Mine with all CPU cores
+equiforge node --mine --testnet
+
+# Mine with 4 threads and a custom tag
+equiforge node --mine -t 4 --miner-tag "MyRig" --testnet
+
+# Mine and connect to a specific peer
+equiforge node --mine --connect 44.55.66.77:19333 --testnet
+```
+
+Your mined blocks will show your tag in the block explorer. Solo mining requires running a full node and storing the entire blockchain.
+
+---
+
+### Method 2: Pool Mining (Recommended)
+
+Connect to a mining pool and earn rewards proportional to your contributed hashrate. No blockchain download required — just point your miner at a pool and start earning.
+
+**This is the best option for most miners.** You earn steady, smaller payouts instead of waiting for rare solo blocks.
+
+#### Connecting to a Pool
+
+```bash
+equiforge pool-mine \
+  --pool 129.80.239.237:19335 \
+  --address YOUR_WALLET_ADDRESS \
+  --threads 4
+```
+
+**Options:**
+
+| Flag | Description |
+|------|-------------|
+| `--pool HOST:PORT` | Pool server address (can specify multiple for failover) |
+| `--address ADDR` | Your wallet address for payouts |
+| `--threads N` or `-t N` | CPU threads to use (default: 1) |
+| `--worker NAME` | Worker name to identify this machine (default: hostname) |
+
+#### Multi-Pool Failover
+
+Specify multiple pools for automatic failover. The miner probes latency to each pool on startup, connects to the fastest one, and automatically switches to the next if the current pool goes down.
+
+```bash
+equiforge pool-mine \
+  --pool 129.80.239.237:19335 \
+  --pool 44.55.66.77:19335 \
+  --pool 88.99.11.22:19335 \
+  --address YOUR_WALLET_ADDRESS \
+  --worker my-desktop \
+  -t 4
+```
+
+**Output:**
+
+```
+⛏️  EquiForge Pool Miner
+   Pools:   3 configured
+   Worker:  my-desktop
+   Threads: 4
+
+🌐 Pool latency probe:
+     23ms  44.55.66.77:19335 ← best
+    142ms  129.80.239.237:19335
+    ---    88.99.11.22:19335 (unreachable)
+
+🔗 Connecting to 44.55.66.77:19335 (23ms latency)...
+✅ Connected to 44.55.66.77:19335
+📋 Job #1: height=138 diff=10/14
+📤 Share #1: nonce=8827361 zeros=11/10
+✅ Accepted (pool total: 1, est: 128.0 H/s, session: 16s)
+```
+
+If a pool goes down mid-mining, you'll see:
+
+```
+❌ 44.55.66.77:19335 — connection reset
+🔄 Failing over to next pool...
+🔗 Connecting to 129.80.239.237:19335 (142ms latency)...
+✅ Connected to 129.80.239.237:19335
+```
+
+#### Getting a Wallet Address
+
+If you only want to pool mine (no full node), you can generate a wallet without syncing:
+
+```bash
+equiforge init --testnet
+equiforge wallet show --testnet
+```
+
+Copy your `eq1q...` address and use it with `--address`.
+
+---
+
+### Method 3: Running Your Own Pool (Advanced)
+
+Run a pool server that other miners can connect to. This requires running a full node. You earn a pool operator fee (default 1%) from all blocks your pool finds.
+
+```bash
+equiforge node --mine --pool --pool-port 19335 --miner-tag "MyPool" --testnet
+```
+
+**Options:**
+
+| Flag | Description |
+|------|-------------|
+| `--pool` | Enable the built-in pool server |
+| `--pool-port PORT` | Port for miners to connect to (default: 9334 mainnet / 19335 testnet) |
+| `--miner-tag "name"` | Pool identity embedded in blocks (shows as `pool:name` in explorer) |
+
+#### Pool Server Requirements
+
+- **A public IP or VPS** — Miners must be able to reach your pool server from the internet.
+- **Open the pool port** — Ensure your firewall allows inbound TCP on the pool port.
+- **Stable internet** — The pool server must stay connected to the P2P network.
+
+#### Setting Up on a VPS (Recommended)
+
+1. **Provision a VPS** — Oracle Cloud Free Tier, AWS, DigitalOcean, etc.
+
+2. **Build and initialize:**
+   ```bash
+   git clone https://github.com/yourusername/equiforge.git
+   cd equiforge
+   cargo build --release
+   ./target/release/equiforge init --testnet
+   ```
+
+3. **Open firewall ports:**
+   ```bash
+   # P2P port + Pool port
+   sudo ufw allow 19333/tcp
+   sudo ufw allow 19335/tcp
+   ```
+
+4. **Run the pool:**
+   ```bash
+   ./target/release/equiforge node --mine --pool --pool-port 19335 --miner-tag "MyPool-US" --testnet
+   ```
+
+5. **Tell miners to connect:**
+   ```
+   equiforge pool-mine --pool YOUR_VPS_IP:19335 --address THEIR_ADDRESS -t 4
+   ```
+
+#### Pool Architecture
+
+The pool server runs inside the node process. It shares the node's blockchain state directly (no RPC overhead). When the pool finds a block:
+
+1. Pool operator's address receives the block reward
+2. Pool distributes payouts to miners via regular transactions based on PPLNS (Pay Per Last N Shares)
+3. The block's coinbase contains the pool's identity tag (e.g., `pool:MyPool-US`)
+
+#### Opening Ports on Windows (for local testing)
+
+If running a pool on your home PC:
+
+```powershell
+# Windows Firewall (run PowerShell as Admin)
+New-NetFirewallRule -DisplayName "EquiForge Pool" -Direction Inbound -Port 19335 -Protocol TCP -Action Allow
+```
+
+Then configure port forwarding on your router: External port `19335` → your PC's local IP → port `19335` TCP.
+
+> **Note:** You cannot connect to your own public IP from inside your network (hairpin NAT limitation). Use `127.0.0.1:19335` for local testing. Miners outside your network can connect to your public IP normally.
+
+---
+
+## Wallet
+
+### View Your Wallet
+
+```bash
+equiforge wallet show --testnet
+```
+
+### Generate a New Address
+
+```bash
+equiforge wallet new-address --testnet
+```
+
+### Check Balance
+
+```bash
+# All wallet addresses
+equiforge balance --testnet
+
+# Specific address
+equiforge balance eq1qz2sgf... --testnet
+```
+
+### Send EQF
+
+```bash
+equiforge send --to eq1qRECIPIENT --amount 10.5 --testnet
+```
+
+The default fee is 0.0001 EQF. Customize with `--fee`:
+
+```bash
+equiforge send --to eq1qRECIPIENT --amount 10.5 --fee 0.001 --testnet
+```
+
+### Encrypt Your Wallet
+
+```bash
+# Encrypt
+equiforge wallet encrypt --password "your-passphrase" --testnet
+
+# Decrypt
+equiforge wallet decrypt --password "your-passphrase" --testnet
+
+# Run with encrypted wallet
+equiforge node --mine --password "your-passphrase" --testnet
+```
+
+---
+
+## Node Operations
+
+### Blockchain Info
+
+```bash
+equiforge info --testnet
+```
+
+### Connected Peers
+
+```bash
+equiforge peers --testnet
+```
+
+### Snapshots (Fast Sync)
+
+Export the blockchain for others to bootstrap quickly:
+
+```bash
+# Export
+equiforge export-snapshot --output chain.bin --testnet
+
+# Import
+equiforge import-snapshot --input chain.bin --testnet
+```
+
+### Custom Port
+
+```bash
+equiforge node --port 29333 --testnet
+```
+
+---
 
 ## Block Explorer
 
-Once the node is running, open the built-in block explorer:
+Every running node includes a built-in block explorer. Open your browser to:
 
-**Public explorer:** http://129.80.239.237:9334
+- **Testnet:** `http://localhost:19334`
+- **Mainnet:** `http://localhost:9334`
 
-**Local explorer:** http://127.0.0.1:9334
+The explorer shows:
 
-## Commands
-
-### Node
-
-```bash
-equiforge node --mine                   # Mine with all CPU cores
-equiforge node --mine --threads 4       # Mine with 4 threads
-equiforge node                          # Run node without mining (relay only)
-```
-
-### Wallet
-
-```bash
-equiforge balance                       # Show your balance
-equiforge balance <ADDRESS>             # Check any address
-equiforge send --to <ADDR> --amount 10  # Send 10 EQF
-equiforge wallet show                   # List all your addresses
-equiforge wallet new-address            # Generate a new receiving address
-equiforge wallet encrypt --password X   # Encrypt your wallet
-equiforge wallet decrypt --password X   # Remove encryption
-```
-
-### Info
-
-```bash
-equiforge info                          # Chain status, difficulty, peers
-equiforge peers                         # Connected peers
-```
-
-### Advanced
-
-```bash
-equiforge --data-dir mynode --port 9335 node --mine   # Custom data dir & port
-equiforge test-mine 10                                 # Test mine 10 blocks (in-memory)
-```
-
-## Multi-Miner Setup
-
-Run multiple miners on the same machine for testing:
-
-```bash
-# Miner A (default port 9333)
-equiforge node --mine
-
-# Miner B (different port & data dir)
-equiforge --data-dir node2 --port 9335 node --mine
-
-# Miner C
-equiforge --data-dir node3 --port 9337 node --mine
-```
-
-All miners auto-discover each other via the seed node.
-
-## Network
-
-| Property | Value |
-|---|---|
-| **Seed Node** | `129.80.239.237:9333` |
-| **Explorer** | http://129.80.239.237:9334 |
-| **P2P Port** | 9333 |
-| **RPC Port** | 9334 |
-
-The network uses gossip-based peer discovery. Connect to the seed node and you'll automatically find other miners.
-
-## Chain Parameters
-
-| Parameter | Value |
-|---|---|
-| Max Supply | **42,000,000 EQF** |
-| Block Reward | 50 EQF (halves every ~6 years) |
-| Block Time | 90 seconds |
-| PoW Algorithm | EquiHash-X (4 MB memory-hard) |
-| Difficulty | LWMA (adjusts every block) |
-| Signatures | Ed25519 |
-| Coinbase Maturity | 100 blocks |
-| Max Block Size | 4 MB |
-| Community Fund | 5% of block reward |
-| Min Transaction Fee | 0.00001 EQF |
-| Halving Interval | 2,103,840 blocks (~6 years) |
-
-## EquiHash-X
-
-EquiForge uses a custom proof-of-work algorithm designed for ASIC resistance:
-
-1. **FILL** — Generate a 4 MB scratchpad from the block header using Blake3
-2. **MIX** — 64 rounds of memory-hard mixing with data-dependent random reads/writes
-3. **SQUEEZE** — Final compression via double SHA-256
-
-Each hash requires 4 MB of fast memory and random access patterns that defeat GPU texture caching and ASIC pipelining. A single CPU core achieves ~50-200 H/s, and GPUs offer minimal speedup due to memory latency.
-
-Building an ASIC with enough on-die SRAM for meaningful parallelism (4 GB for 1000 cores) is economically impractical, keeping mining accessible to anyone with a modern computer.
-
-## Architecture
-
-```
-~4,000 lines of Rust
-
-src/
-├── core/
-│   ├── chain.rs      Blockchain state, UTXO set, validation, reorgs
-│   ├── types.rs      Block, Transaction, OutPoint types
-│   └── params.rs     Consensus parameters, seed nodes
-├── pow/mod.rs        EquiHash-X proof-of-work algorithm
-├── miner/mod.rs      Block template creation, parallel mining
-├── network/mod.rs    P2P protocol, mempool, peer banning, gossip
-├── wallet/mod.rs     Ed25519 keys, signing, encryption, coin selection
-├── rpc/mod.rs        JSON-RPC server, block explorer web UI
-├── storage/mod.rs    Sled embedded database
-└── main.rs           CLI application
-```
-
-## RPC API
-
-The node exposes a JSON-RPC server on port 9334.
-
-```bash
-# Chain info
-curl -X POST http://127.0.0.1:9334 \
-  -d '{"method":"getinfo","params":[],"id":1}'
-
-# Get block by height
-curl -X POST http://127.0.0.1:9334 \
-  -d '{"method":"getblock","params":["5"],"id":1}'
-
-# Check balance
-curl -X POST http://127.0.0.1:9334 \
-  -d '{"method":"getbalance","params":["ADDRESS"],"id":1}'
-```
-
-**Available methods:** `getinfo` `getblockcount` `getbestblockhash` `getblock` `getbalance` `listunspent` `sendrawtransaction` `getmempool` `getpeerinfo` `getmininginfo`
-
-## Security
-
-- **Wallet Encryption** — AES-256 with HMAC integrity, 100K-iteration key derivation
-- **Signature Verification** — All transactions verified against UTXO pubkey hashes
-- **Peer Banning** — Strike-based system auto-bans nodes sending invalid data
-- **Chain Reorgs** — Cumulative work tracking with automatic reorganization to the best chain
-
-## Run a Seed Node
-
-Help decentralize the network by running a seed node on a VPS:
-
-```bash
-# On any Linux VPS with port 9333 open
-equiforge node --port 9333
-```
-
-Contact us to get your node added to the hardcoded seed list.
-
-## Roadmap
-
-- [x] Custom ASIC-resistant PoW (EquiHash-X)
-- [x] P2P network with peer discovery
-- [x] Block explorer
-- [x] Wallet encryption
-- [x] Chain reorg support
-- [x] Fee market
-- [x] Peer banning
-- [ ] Mining pool protocol
-- [ ] Wrapped EQF on Solana/Base (DEX trading)
-- [ ] Decentralized compute marketplace
-- [ ] Smart transaction scripting
-
-## License
-
-MIT — do whatever you want with it.
+- Real-time blocks with miner identity tags
+- Transaction details with input/output tracking
+- Address pages with spendable/immature balance breakdown
+- Network statistics (hashrate, difficulty, peer count)
+- UTXO details with coinbase maturity status
+- Mempool viewer
 
 ---
 
-<div align="center">
+## RPC API
 
-**[Start Mining](#start-mining)** · **[Block Explorer](http://129.80.239.237:9334)** · **[Discord](https://discord.gg/ZZ8e9NTjdR)** · **[𝕏 Twitter](https://x.com/eqf_crypto)**
+The node exposes a JSON-RPC API on the RPC port (P2P port + 1).
 
-</div>
+### Example Request
+
+```bash
+curl -s http://127.0.0.1:19334 \
+  -d '{"method":"getinfo","params":[],"id":1}'
+```
+
+### Available Methods
+
+| Method | Params | Description |
+|--------|--------|-------------|
+| `getinfo` | `[]` | Node status, height, difficulty, peers |
+| `getblock` | `[height]` or `[hash]` | Block details with transactions |
+| `gettx` | `[txid]` | Transaction details |
+| `getbalance` | `[address]` | Address balance |
+| `getaddress` | `[address]` | Full address info: balance, UTXOs, tx history |
+| `getmempool` | `[]` | Pending transactions |
+| `getpeerinfo` | `[]` | Connected peer details |
+| `getrichlist` | `[]` | Top addresses by balance |
+| `getblocktemplate` | `[pubkey_hash_hex]` | Block template for external mining |
+| `submitblock` | `[header_hex, nonce, [tx_hex...]]` | Submit a mined block |
+
+### External Pool Integration
+
+Third-party pool operators can use `getblocktemplate` and `submitblock` to build pools without modifying the node:
+
+```bash
+# Get a block template
+curl -s http://127.0.0.1:19334 \
+  -d '{"method":"getblocktemplate","params":["YOUR_PUBKEY_HASH_HEX"],"id":1}'
+
+# Submit a mined block
+curl -s http://127.0.0.1:19334 \
+  -d '{"method":"submitblock","params":["HEADER_HEX","NONCE","TX_HEX_ARRAY"],"id":1}'
+```
+
+---
+
+## Testnet vs Mainnet
+
+| | Testnet | Mainnet |
+|---|---------|---------|
+| Flag | `--testnet` | *(none)* |
+| P2P Port | 19333 | 9333 |
+| RPC Port | 19334 | 9334 |
+| Data Directory | `equiforge_testnet/` | `equiforge_data/` |
+| Seed Node | 129.80.239.237:19333 | 129.80.239.237:9333 |
+
+Always use `--testnet` while the network is in testing. Mainnet will launch with a fresh genesis block.
+
+---
+
+## Building from Source
+
+### Requirements
+
+- Rust 1.75+ (install from [rustup.rs](https://rustup.rs))
+- A C compiler (gcc/clang/MSVC)
+
+### Build
+
+```bash
+git clone https://github.com/yourusername/equiforge.git
+cd equiforge
+cargo build --release
+```
+
+### Run Tests
+
+```bash
+cargo test
+```
+
+### Test Mining (No Network)
+
+Mine blocks in memory to verify everything works:
+
+```bash
+equiforge test-mine 10
+```
+
+---
+
+## Mining Performance Reference
+
+EquiHash-X is intentionally slow per hash (~100-200 H/s per core) to keep mining fair across hardware:
+
+| Hardware | Approximate Hashrate |
+|----------|---------------------|
+| 1 CPU core | ~100-200 H/s |
+| 4 CPU cores | ~400-800 H/s |
+| 8 CPU cores | ~800-1600 H/s |
+| 16 CPU cores | ~1600-3200 H/s |
+
+At current testnet difficulty, blocks are found approximately every 90 seconds across all miners combined.
+
+---
+
+## Project Structure
+
+```
+src/
+├── core/
+│   ├── types.rs        # Block, Transaction, Hash types
+│   ├── chain.rs        # Blockchain state, validation, difficulty
+│   └── params.rs       # Network parameters, rewards, halving
+├── crypto/             # Ed25519 signatures, key derivation
+├── miner/              # Block template creation, parallel mining
+├── network/            # P2P gossip, peer management, sync
+├── pool/
+│   ├── mod.rs          # Pool server, PPLNS rewards, shared protocol
+│   └── pool_miner.rs   # Lightweight pool miner client
+├── pow/                # EquiHash-X proof-of-work algorithm
+├── rpc/
+│   ├── mod.rs          # JSON-RPC server
+│   └── explorer.html   # Built-in block explorer
+├── storage/            # Block persistence, UTXO set
+├── wallet/             # Key management, address encoding
+├── lib.rs
+└── main.rs             # CLI entry point
+```
+
+---
+
+## License
+
+[Your license here]
+
+---
+
+## Links
+
+- **Block Explorer:** http://129.80.239.237:19334
+- **Testnet Seed Node:** 129.80.239.237:19333
+- **Testnet Pool:** 129.80.239.237:19335

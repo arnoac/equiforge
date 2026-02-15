@@ -14,6 +14,7 @@ pub struct MinerConfig {
     pub community_fund_hash: Hash256,
     /// Number of mining threads
     pub threads: usize,
+    pub miner_tag: String,
 }
 
 impl Default for MinerConfig {
@@ -22,6 +23,7 @@ impl Default for MinerConfig {
             miner_pubkey_hash: [0u8; 32],
             community_fund_hash: [0xCF; 32],
             threads: 1,
+            miner_tag: String::from("EquiForge-Miner"),
         }
     }
 }
@@ -88,6 +90,7 @@ pub fn create_block_template(
         reward + total_fees,
         config.miner_pubkey_hash,
         config.community_fund_hash,
+        &config.miner_tag,
     );
 
     let mut txs = vec![coinbase];
@@ -313,7 +316,7 @@ mod tests {
         assert_eq!(template.header.prev_hash, chain.tip);
         assert_eq!(template.transactions.len(), 1);
         assert!(template.transactions[0].is_coinbase());
-        assert_eq!(template.header.difficulty_target, INITIAL_DIFFICULTY);
+        assert_eq!(template.&header.difficulty_target, initial_target());
     }
 
     #[test]

@@ -43,6 +43,17 @@ enum Commands {
         mine: bool,
         #[arg(short, long, default_value_t = 0)]
         threads: usize,
+        /// Run a mining pool server alongside the node
+        #[arg(long)]
+        pool: bool,
+
+        /// Pool server port (default: 9334)
+        #[arg(long, default_value = "9334")]
+        pool_port: u16,
+
+         /// Miner identity tag embedded in blocks (max 32 chars)
+        #[arg(long, default_value = "")]
+        miner_tag: String,
     },
     /// Send EQF to an address
     Send {
@@ -80,6 +91,25 @@ enum Commands {
     TestMine {
         #[arg(default_value_t = 5)]
         count: u64,
+    },
+    /// Connect to a mining pool (no full node needed)
+    PoolMine {
+        /// Pool server addresses — can specify multiple for failover
+        /// e.g., --pool 1.2.3.4:9334 --pool 5.6.7.8:9334
+        #[arg(long, required = true)]
+        pool: Vec<String>,
+
+        /// Your payout address (hex pubkey hash from `equiforge wallet info`)
+        #[arg(long)]
+        address: String,
+
+        /// Worker name (identifies you in pool stats)
+         #[arg(long)]
+        worker: Option<String>,
+
+        /// Mining threads
+        #[arg(long, short, default_value = "1")]
+        threads: usize,
     },
 }
 
@@ -153,9 +183,19 @@ fn main() {
             println!("\n  Run: equiforge node --mine");
         }
 
-        Commands::Node { connect, mine, threads } => {
+        Commands::Node { connect, mine, threads, pool, pool_port, miner_tag } => {
             let rt = tokio::runtime::Runtime::new().unwrap();
-            rt.block_on(run_node(data_dir, port, connect, mine, threads, pw));
+            rt.block_on(run_node(
+        data_dir,
+        port,
+        connect,
+        mine,
+        threads,
+        pool,
+        pool_port,
+        pw,
+        miner_tag,
+    ));
         }
 
         Commands::Info => {
@@ -312,6 +352,7 @@ fn main() {
                     println!("  Addresses: {}", wallet.keypairs.len());
                     for (i, kp) in wallet.keypairs.iter().enumerate() {
                         println!("  [{}] {}{}", i, kp.address(), if i == 0 { " (primary)" } else { "" });
+                        println!("      Pubkey hash (hex): {}", hex::encode(kp.pubkey_hash()));
                     }
                 }
                 WalletAction::NewAddress => {
@@ -526,6 +567,7 @@ fn main() {
                 miner_pubkey_hash: wallet.primary_pubkey_hash(),
                 community_fund_hash: [0xCF; 32],
                 threads: num_cpus::get().max(1),
+                miner_tag: String::new(),
             };
             let start = std::time::Instant::now();
             for i in 0..count {
@@ -548,6 +590,24 @@ fn main() {
                 chain.height, el.as_secs_f64(), el.as_secs_f64() / chain.height.max(1) as f64,
                 format_eqf(bal), chain.fractional_difficulty());
         }
+
+        Commands::PoolMine { pool, address, worker, threads } => {
+            let worker_name = worker.unwrap_or_else(|| {
+                hostname::get()
+                    .ok()
+                    .and_then(|h| h.into_string().ok())
+                    .unwrap_or_else(|| format!("worker-{}", std::process::id()))
+            });
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(equiforge::pool::pool_miner::run_pool_miner(
+                equiforge::pool::pool_miner::PoolMinerConfig {
+                    pool_addrs: pool,       // was: pool_addrs: vec![pool]
+                    worker_name,
+                    payout_address: address,
+                    threads,
+                }
+            ));
+        }
     }
 }
 
@@ -560,7 +620,17 @@ use equiforge::core::types::{Block, OutPoint, TxOutput};
 
 // ─── Node ───────────────────────────────────────────────────────────
 
-async fn run_node(data_dir: &str, port: u16, seeds: Vec<String>, mine: bool, threads: usize, pw: Option<&str>) {
+async fn run_node(
+    data_dir: &str,
+    port: u16,
+    seeds: Vec<String>,
+    mine: bool,
+    threads: usize,
+    pool: bool,
+    pool_port: u16,
+    pw: Option<&str>,
+    miner_tag: String,
+) {
     let state = NodeState::open(data_dir, port);
     let wallet = load_wallet(data_dir, pw);
 
@@ -574,6 +644,7 @@ async fn run_node(data_dir: &str, port: u16, seeds: Vec<String>, mine: bool, thr
     println!("  Wallet:    {}", wallet.primary_address());
     println!("  Encrypted: {}", wallet.is_encrypted());
     println!("  Mining:    {}", if mine { "enabled" } else { "disabled" });
+    if !miner_tag.is_empty() { println!("  Tag:       {}", miner_tag); }
     if !seed_nodes().is_empty() { println!("  Seeds:     {} hardcoded", seed_nodes().len()); }
     if is_testnet() { println!("  Network:   TESTNET"); }
 
@@ -604,12 +675,31 @@ async fn run_node(data_dir: &str, port: u16, seeds: Vec<String>, mine: bool, thr
     { let s = state.clone(); let rp = rpc_port(port);
       tokio::spawn(async move { rpc::start_rpc_server(s, rp).await; }); }
 
+    if pool {
+        let pool_state = state.clone();
+        let pool_config = equiforge::pool::PoolConfig {
+            port: pool_port,
+            fee_percent: 1.0,
+            share_diff_offset: 4,
+            min_share_difficulty: 4,
+            pplns_window: 10_000,
+            pool_payout_hash: wallet.primary_pubkey_hash(),  // pool operator = node operator
+            pool_name: if miner_tag.is_empty() { String::from("EquiForge-Pool") } else { miner_tag.clone() },
+        };
+        tokio::spawn(async move {
+            if let Err(e) = equiforge::pool::start_pool_server(pool_state, pool_config).await {
+                tracing::error!("Pool server error: {}", e);
+            }
+        });
+    }
+
     // Mining
     if mine {
         let s = state.clone(); let st = stop.clone();
         let t = if threads == 0 { num_cpus::get().max(1) } else { threads };
+        let tag = miner_tag.clone();
         println!("  Threads:   {}", t);
-        tokio::spawn(async move { mining_task(s, wallet, t, st).await; });
+        tokio::spawn(async move { mining_task(s, wallet, t, st, tag).await; });
     }
 
     // Status
@@ -659,7 +749,7 @@ async fn run_node(data_dir: &str, port: u16, seeds: Vec<String>, mine: bool, thr
     }
 }
 
-async fn mining_task(state: Arc<NodeState>, wallet: Wallet, threads: usize, stop: Arc<AtomicBool>) {
+async fn mining_task(state: Arc<NodeState>, wallet: Wallet, threads: usize, stop: Arc<AtomicBool>, miner_tag: String) {
     tracing::info!("⛏️  Mining to {}", wallet.primary_address());
     loop {
         if stop.load(Ordering::Relaxed) { break; }
@@ -671,6 +761,7 @@ async fn mining_task(state: Arc<NodeState>, wallet: Wallet, threads: usize, stop
             let cfg = MinerConfig {
                 miner_pubkey_hash: wallet.primary_pubkey_hash(),
                 community_fund_hash: [0xCF; 32], threads,
+                miner_tag: miner_tag.clone(),
             };
             let height = chain.height + 1;
             let diff = chain.next_difficulty();

@@ -7,6 +7,9 @@ use crate::core::params::*;
 use crate::core::types::*;
 use crate::network::NodeState;
 use crate::wallet;
+use crate::miner;
+use crate::network;
+use crate::core::params::COINBASE_MATURITY;
 
 pub const RPC_PORT_OFFSET: u16 = 1;
 
@@ -207,38 +210,134 @@ async fn handle_rpc(req: RpcRequest, state: &Arc<NodeState>) -> RpcResponse {
             }
             error(req.id, -32602, "transaction not found")
         }
-        "getaddress" => {
+         "getaddress" => {
             let address = req.params.get(0).or_else(|| req.params.get("address")).and_then(|v| v.as_str()).unwrap_or("");
             match wallet::address_to_pubkey_hash(address) {
                 Some(hash) => {
                     let chain = state.chain.read().await;
-                    let balance = chain.utxo_set.balance_of(&hash);
+
+                    // ── UTXO-based balances ──
                     let utxos = chain.utxo_set.utxos_for(&hash);
+                    let mut total_balance: u64 = 0;
+                    let mut immature_balance: u64 = 0;
+                    let mut mature_balance: u64 = 0;
+
+                    for (_op, entry) in &utxos {
+                        let amount = entry.output.amount;
+                        total_balance += amount;
+                        let confs = chain.height.saturating_sub(entry.height);
+                        if entry.is_coinbase && confs < COINBASE_MATURITY {
+                            immature_balance += amount;
+                        } else {
+                            mature_balance += amount;
+                        }
+                    }
+
+                    // ── Build a lookup: txid → Vec<TxOutput> for resolving input provenance ──
+                    // We need this to figure out if a transaction INPUT was spending from our address.
+                    // A spent UTXO no longer exists in the UTXO set, so we scan block history.
+                    let mut output_owner: std::collections::HashMap<(Hash256, u32), (Hash256, u64)> = std::collections::HashMap::new();
+                    // Key: (txid, vout) → Value: (pubkey_hash, amount)
+
+                    // First pass: build the output ownership map
+                    for h in 0..=chain.height {
+                        if let Some(block) = chain.block_at_height(h) {
+                            for tx in &block.transactions {
+                                let txid = tx.hash();
+                                for (vout, out) in tx.outputs.iter().enumerate() {
+                                    output_owner.insert((txid, vout as u32), (out.pubkey_hash, out.amount));
+                                }
+                            }
+                        }
+                    }
+
+                    // ── Second pass: scan transactions for involvement ──
                     let mut txs: Vec<serde_json::Value> = Vec::new();
-                    let (mut tx_count, mut total_received, mut total_sent) = (0u64, 0u64, 0u64);
+                    let mut tx_count: u64 = 0;
+                    let mut total_received: u64 = 0;
+                    let mut total_sent: u64 = 0;
+
                     for h in (0..=chain.height).rev() {
                         if let Some(block) = chain.block_at_height(h) {
                             for tx in &block.transactions {
-                                let mut received = 0u64;
-                                let mut involved = false;
-                                for out in &tx.outputs { if out.pubkey_hash == hash { received += out.amount; involved = true; } }
-                                if involved {
-                                    tx_count += 1; total_received += received;
+                                let mut received: u64 = 0;
+                                let mut sent: u64 = 0;
+
+                                // Check outputs → received
+                                for out in &tx.outputs {
+                                    if out.pubkey_hash == hash {
+                                        received += out.amount;
+                                    }
+                                }
+
+                                // Check inputs → sent (skip coinbase which has no real inputs)
+                                if !tx.is_coinbase() {
+                                    for inp in &tx.inputs {
+                                        if let Some((owner, amount)) = output_owner.get(&(inp.previous_output.txid, inp.previous_output.vout)) {
+                                            if *owner == hash {
+                                                sent += amount;
+                                            }
+                                        }
+                                    }
+                                }
+
+                                if received > 0 || sent > 0 {
+                                    tx_count += 1;
+                                    total_received += received;
+                                    total_sent += sent;
+                                    let net = received as i64 - sent as i64;
                                     if txs.len() < 50 {
-                                        txs.push(json!({"txid":hex::encode(tx.hash()),"block_height":h,"timestamp":block.header.timestamp,
-                                            "received":received as f64/COIN as f64,"sent":0,"net":received as f64/COIN as f64,"is_coinbase":tx.is_coinbase()}));
+                                        txs.push(json!({
+                                            "txid": hex::encode(tx.hash()),
+                                            "block_height": h,
+                                            "timestamp": block.header.timestamp,
+                                            "received": received as f64 / COIN as f64,
+                                            "sent": sent as f64 / COIN as f64,
+                                            "net": net as f64 / COIN as f64,
+                                            "is_coinbase": tx.is_coinbase(),
+                                        }));
                                     }
                                 }
                             }
                         }
                     }
-                    let utxo_list: Vec<serde_json::Value> = utxos.iter().map(|(op, e)| json!({
-                        "txid":hex::encode(op.txid),"vout":op.vout,"amount":e.output.amount as f64/COIN as f64,
-                        "height":e.height,"coinbase":e.is_coinbase,"confirmations":chain.height-e.height+1,
-                    })).collect();
-                    success(req.id, json!({"address":address,"balance":balance as f64/COIN as f64,"balance_base":balance,
-                        "total_received":total_received as f64/COIN as f64,"total_sent":total_sent as f64/COIN as f64,
-                        "tx_count":tx_count,"utxo_count":utxo_list.len(),"transactions":txs,"utxos":utxo_list}))
+
+                    // ── UTXO list with maturity info ──
+                    let utxo_list: Vec<serde_json::Value> = utxos.iter().map(|(op, e)| {
+                        let confs = chain.height.saturating_sub(e.height) + 1;
+                        let mature = !e.is_coinbase || confs >= COINBASE_MATURITY;
+                        json!({
+                            "txid": hex::encode(op.txid),
+                            "vout": op.vout,
+                            "amount": e.output.amount as f64 / COIN as f64,
+                            "amount_base": e.output.amount,
+                            "height": e.height,
+                            "coinbase": e.is_coinbase,
+                            "confirmations": confs,
+                            "mature": mature,
+                        })
+                    }).collect();
+
+                    success(req.id, json!({
+                        "address": address,
+                        // Total balance (all UTXOs)
+                        "balance": total_balance as f64 / COIN as f64,
+                        "balance_base": total_balance,
+                        // Spendable now (mature only)
+                        "spendable": mature_balance as f64 / COIN as f64,
+                        "spendable_base": mature_balance,
+                        // Immature coinbase (< 100 confirmations)
+                        "immature": immature_balance as f64 / COIN as f64,
+                        "immature_base": immature_balance,
+                        // Lifetime totals
+                        "total_received": total_received as f64 / COIN as f64,
+                        "total_sent": total_sent as f64 / COIN as f64,
+                        // Counts
+                        "tx_count": tx_count,
+                        "utxo_count": utxo_list.len(),
+                        "transactions": txs,
+                        "utxos": utxo_list,
+                    }))
                 }
                 None => error(req.id, -32602, "invalid address"),
             }
@@ -306,6 +405,147 @@ async fn handle_rpc(req: RpcRequest, state: &Arc<NodeState>) -> RpcResponse {
             })).collect();
             success(req.id, json!({"total_addresses":sorted.len(),"addresses":list}))
         }
+         "getblocktemplate" => {
+            let miner_hex = req.params.get(0).and_then(|v| v.as_str()).unwrap_or("");
+            let miner_hash: Hash256 = if miner_hex.len() == 64 {
+                match hex::decode(miner_hex) {
+                    Ok(bytes) if bytes.len() == 32 => {
+                        let mut h = [0u8; 32];
+                        h.copy_from_slice(&bytes);
+                        h
+                    }
+                    _ => return error(req.id, -32602, "invalid miner_pubkey_hash (need 64 hex chars)"),
+                }
+            } else {
+                return error(req.id, -32602, "params: [\"miner_pubkey_hash_hex\"]");
+            };
+
+            let chain = state.chain.read().await;
+            let mp = state.mempool.lock().await;
+            let pending = mp.get_pending();
+            drop(mp);
+
+            let cfg = miner::MinerConfig {
+                miner_pubkey_hash: miner_hash,
+                community_fund_hash: [0xCF; 32],
+                threads: 1,
+                miner_tag: String::new(),
+            };
+            let template = miner::create_block_template(&chain, &pending, &cfg);
+            let difficulty = chain.next_difficulty();
+            drop(chain);
+
+            // Serialize transactions so external miner can reconstruct the block
+            let txs_hex: Vec<String> = template.transactions.iter()
+                .map(|tx| hex::encode(bincode::serialize(tx).unwrap()))
+                .collect();
+
+            success(req.id, json!({
+                "height": template.header.height,
+                "prev_hash": hex::encode(template.header.prev_hash),
+                "merkle_root": hex::encode(template.header.merkle_root),
+                "timestamp": template.header.timestamp,
+                "difficulty_target": template.header.difficulty_target,
+                "version": template.header.version,
+                "network_difficulty": difficulty,
+                "block_reward": block_reward(template.header.height) as f64 / COIN as f64,
+                "tx_count": template.transactions.len(),
+                "transactions_hex": txs_hex,
+                // The header as a single hex blob for easy hashing
+                "header_hex": hex::encode(bincode::serialize(&template.header).unwrap()),
+            }))
+        }
+
+        // ─── submitblock ───────────────────────────────────────────
+        // Submit a mined block to the network.
+        // Params: [header_hex, nonce] OR [block_hex]
+        //
+        // Option A (recommended for pools):
+        //   ["header_hex_from_getblocktemplate", nonce_u64, ["tx1_hex", "tx2_hex", ...]]
+        //   Pool takes the header_hex from getblocktemplate, the winning nonce,
+        //   and the same tx list, reconstructs the block, and submits.
+        //
+        // Option B (full block):
+        //   [block_hex]
+        //   Full bincode-serialized Block as hex.
+        "submitblock" => {
+            let block: Block = if req.params.is_array() && req.params.as_array().map(|a| a.len()).unwrap_or(0) >= 3 {
+                // Option A: header_hex + nonce + transactions_hex array
+                let header_hex = match req.params.get(0).and_then(|v| v.as_str()) {
+                    Some(h) => h,
+                    None => return error(req.id, -32602, "params[0]: header_hex string"),
+                };
+                let nonce = match req.params.get(1).and_then(|v| v.as_u64()) {
+                    Some(n) => n,
+                    None => return error(req.id, -32602, "params[1]: nonce (u64)"),
+                };
+                let txs_hex = match req.params.get(2).and_then(|v| v.as_array()) {
+                    Some(arr) => arr,
+                    None => return error(req.id, -32602, "params[2]: transactions_hex array"),
+                };
+
+                // Decode header
+                let header_bytes = match hex::decode(header_hex) {
+                    Ok(b) => b,
+                    Err(_) => return error(req.id, -32602, "invalid header_hex"),
+                };
+                let mut header: BlockHeader = match bincode::deserialize(&header_bytes) {
+                    Ok(h) => h,
+                    Err(_) => return error(req.id, -32602, "failed to decode header"),
+                };
+                header.nonce = nonce;
+
+                // Decode transactions
+                let mut transactions: Vec<Transaction> = Vec::new();
+                for (i, tx_val) in txs_hex.iter().enumerate() {
+                    let tx_hex = match tx_val.as_str() {
+                        Some(s) => s,
+                        None => return error(req.id, -32602, &format!("tx[{}] not a string", i)),
+                    };
+                    let tx_bytes = match hex::decode(tx_hex) {
+                        Ok(b) => b,
+                        Err(_) => return error(req.id, -32602, &format!("tx[{}] invalid hex", i)),
+                    };
+                    let tx: Transaction = match bincode::deserialize(&tx_bytes) {
+                        Ok(t) => t,
+                        Err(_) => return error(req.id, -32602, &format!("tx[{}] decode failed", i)),
+                    };
+                    transactions.push(tx);
+                }
+
+                Block { header, transactions }
+            } else if let Some(block_hex) = req.params.get(0).and_then(|v| v.as_str()) {
+                // Option B: full block hex
+                let block_bytes = match hex::decode(block_hex) {
+                    Ok(b) => b,
+                    Err(_) => return error(req.id, -32602, "invalid block hex"),
+                };
+                match bincode::deserialize(&block_bytes) {
+                    Ok(b) => b,
+                    Err(_) => return error(req.id, -32602, "failed to decode block"),
+                }
+            } else {
+                return error(req.id, -32602,
+                    "params: [header_hex, nonce, [tx_hex...]] or [block_hex]");
+            };
+
+            // Verify PoW before accepting
+            if !block.header.meets_difficulty() {
+                return error(req.id, -32010, "block does not meet difficulty target");
+            }
+
+            let block_hash = hex::encode(block.header.hash());
+            let height = block.header.height;
+
+            // Submit to network (same path as solo mining and pool)
+            network::broadcast_block(&state, block).await;
+
+            success(req.id, json!({
+                "accepted": true,
+                "hash": block_hash,
+                "height": height,
+            }))
+        }
         _ => error(req.id, -32601, &format!("method '{}' not found", req.method)),
     }
 }
@@ -320,6 +560,7 @@ fn block_to_json(block: &Block, chain: &crate::core::chain::Chain) -> serde_json
     let fees = coinbase_output.saturating_sub(reward);
     let prev_time = if height > 0 { chain.block_at_height(height-1).map(|b| b.header.timestamp).unwrap_or(0) } else { 0 };
     let block_time_delta = if prev_time > 0 { block.header.timestamp - prev_time } else { 0 };
+    let miner_tag = block.transactions[0].coinbase_tag();
     let txs: Vec<serde_json::Value> = block.transactions.iter().enumerate().map(|(i, tx)| {
         let output_total: u64 = tx.outputs.iter().map(|o| o.amount).sum();
         let recipients: Vec<serde_json::Value> = tx.outputs.iter().map(|out| json!({
@@ -333,7 +574,7 @@ fn block_to_json(block: &Block, chain: &crate::core::chain::Chain) -> serde_json
         "timestamp":block.header.timestamp,"difficulty":block.header.difficulty_target,"nonce":block.header.nonce,
         "tx_count":block.transactions.len(),"transactions":txs,"size":block.size(),"miner":miner_addr,
         "reward":reward as f64/COIN as f64,"fees":fees as f64/COIN as f64,"block_time":block_time_delta,
-        "confirmations":chain.height-height+1})
+        "confirmations":chain.height-height+1, "miner_tag": miner_tag})
 }
 
 // ─── RPC Client ────────────────────────────────────────────────────
