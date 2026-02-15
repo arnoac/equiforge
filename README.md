@@ -477,7 +477,7 @@ src/
 
 ## License
 
-[Your license here]
+
 
 ---
 
